@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Caches
+.ruff_cache/
+.pytest_cache/
+
+# Agent runtime artefacts
+agent_workspace/
+
+# IDE
+.vscode/
+.idea/
+.cursorignore
+
+# OS
+.DS_Store
+
+# Databases
+*.db
+
+# Environment
+.env
