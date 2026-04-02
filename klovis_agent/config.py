@@ -44,10 +44,7 @@ class AgentConfig(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     max_iterations: int = 25
     verbose: bool = False
-
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-
     data_dir: str = ""
     cache_dir: str = ""
-
     db_url: str = ""
