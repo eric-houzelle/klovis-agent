@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from dotenv import load_dotenv
 
@@ -30,8 +31,21 @@ Options:
 """
 
 
-def _parse_args(argv: list[str]) -> dict:
-    opts: dict = {
+class ParsedOptions(TypedDict):
+    """Type definition for parsed CLI options."""
+
+    verbose: bool
+    daemon: bool
+    interval: float
+    cycles: int
+    data_dir: str
+    soul: str
+    ephemeral: bool
+    goal_parts: list[str]
+
+
+def _parse_args(argv: list[str]) -> ParsedOptions:
+    opts: ParsedOptions = {
         "verbose": False,
         "daemon": False,
         "interval": 30.0,
@@ -109,38 +123,25 @@ async def _run_single(
     )
 
 
-def _build_perception_sources() -> list:
+def _build_perception_sources() -> list[InboxPerceptionSource]:
     """Instantiate the perception sources for daemon mode.
 
-    This is where you add or remove sources depending on your setup.
+    This is where you add or remove sources that the agent observes
+    continuously in daemon mode.
     """
-    sources = [InboxPerceptionSource()]
-
-    try:
-        from klovis_agent.tools.builtin.moltbook import (
-            MoltbookPerceptionSource,
-            load_credentials,
-        )
-
-        creds = load_credentials()
-        if creds.get("api_key"):
-            sources.append(MoltbookPerceptionSource())
-    except Exception:
-        pass
-
-    return sources
+    return [InboxPerceptionSource()]
 
 
 async def _run_daemon(
     config: AgentConfig,
     interval: float,
-    max_cycles: int,
+    cycles: int,
     verbose: bool,
     data_dir: str = "",
     soul: str = "",
+    ephemeral: bool = False,
 ) -> None:
-    sources = _build_perception_sources()
-
+    perceptions = _build_perception_sources()
     agent = Agent(
         llm=config.llm,
         sandbox=config.sandbox,
@@ -148,7 +149,8 @@ async def _run_daemon(
         verbose=verbose,
         data_dir=data_dir or config.data_dir or None,
         soul=Path(soul) if soul else None,
-        perceptions=sources,
+        ephemeral=ephemeral,
+        perceptions=perceptions,
     )
 
     agent.console.banner(config.llm.default_model, config.llm.base_url)
@@ -159,44 +161,46 @@ async def _run_daemon(
         config.sandbox.backend,
     )
 
-    daemon = agent.as_daemon(
-        interval_minutes=interval,
-        max_cycles=max_cycles,
-    )
+    daemon = agent.as_daemon(interval_minutes=interval, max_cycles=cycles or None)
     await daemon.run()
 
 
-async def main() -> None:
+def main() -> None:
+    """Main entry point."""
     load_dotenv()
-
     opts = _parse_args(sys.argv[1:])
-    verbose = opts["verbose"]
+
+    goal = " ".join(opts["goal_parts"]) if opts["goal_parts"] else None
+    if not goal and not opts["daemon"]:
+        print(_HELP)
+        sys.exit(1)
 
     config = AgentConfig()
 
-    if not config.llm.api_key:
-        print("Error: AGENT_LLM__API_KEY not set in .env")
-        sys.exit(1)
-
     if opts["daemon"]:
-        await _run_daemon(
-            config, opts["interval"], opts["cycles"], verbose,
-            data_dir=opts["data_dir"],
-            soul=opts["soul"],
+        asyncio.run(
+            _run_daemon(
+                config,
+                opts["interval"],
+                opts["cycles"],
+                opts["verbose"],
+                opts["data_dir"],
+                opts["soul"],
+                opts["ephemeral"],
+            )
         )
-    else:
-        goal = (
-            " ".join(opts["goal_parts"])
-            if opts["goal_parts"]
-            else "Explain what 2+2 equals and why."
-        )
-        await _run_single(
-            config, goal, verbose,
-            data_dir=opts["data_dir"],
-            soul=opts["soul"],
-            ephemeral=opts["ephemeral"],
+    elif goal:
+        asyncio.run(
+            _run_single(
+                config,
+                goal,
+                opts["verbose"],
+                opts["data_dir"],
+                opts["soul"],
+                opts["ephemeral"],
+            )
         )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
