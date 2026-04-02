@@ -1,61 +1,58 @@
-# klovis-agent
+<h3 align="center">
+  <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/LangGraph-powered-orange" alt="LangGraph">
+  <img src="https://img.shields.io/badge/license-proprietary-lightgrey" alt="License">
+</h3>
 
-Composable Python library for building **goal-oriented autonomous agents**. Agents plan, execute, verify, and dynamically adapt their strategy through a LangGraph loop. In daemon mode, they observe their environment, decide whether to act, and consolidate their memory — all continuously.
+<h3 align="center">
+  <b>klovis-agent</b><br>
+  <sub>Composable autonomous agents that plan, act, and remember.</sub>
+</h3>
 
-![demo](./assets/demo.gif)
+<p align="center">
+Composable Python library for building <b>goal-oriented autonomous agents</b>.<br>
+Agents plan, execute, verify, and dynamically adapt their strategy through a LangGraph loop.<br>
+In daemon mode, they observe their environment, decide whether to act, and consolidate their memory — all continuously.
+</p>
 
----
-
-## Overview
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                      CLI  /  REST API                        │
-├──────────────────────────────────────────────────────────────┤
-│                          Agent                               │
-│                                                              │
-│  ┌────────────┐   ┌─────────────┐   ┌────────────────────┐  │
-│  │   Tools     │   │ Perception  │   │      Memory        │  │
-│  │ (composable)│   │  (sources)  │   │ episodic/semantic  │  │
-│  └────────────┘   └─────────────┘   └────────────────────┘  │
-│                                                              │
-├──────────────────────────────────────────────────────────────┤
-│              LangGraph Execution Core                        │
-│        plan → execute → check → replan → finish              │
-├──────────────────────────────────────────────────────────────┤
-│          LLM Router            │        Sandbox              │
-│   (phase-based routing)        │   (isolated execution)      │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Two operating modes:**
-
-| Mode | Description |
-|------|-------------|
-| **Single-run** | The agent receives a goal, plans, executes, and returns a result |
-| **Daemon (OODA)** | Continuous loop: Observe → Orient → Decide → Act → Consolidate |
+<p align="center">
+  <img src="./assets/demo.gif" alt="demo" width="700">
+</p>
 
 ---
 
-## Quick start
+`klovis-agent` gives you everything you need to build agents that think, act, and learn:
 
-### Single-run
+🧠 **Goal-oriented execution** — the agent plans multi-step strategies, executes them, and replans on failure. Not a chatbot — a reasoning loop.
+
+🔄 **Daemon mode (OODA)** — continuous perception-decision-action loop. The agent observes its environment, recalls relevant memories, and decides autonomously whether to act.
+
+🧩 **Fully composable** — tools, perception sources, memory backends, and sandbox are all injectable. Nothing is hardcoded.
+
+💾 **Two-zone persistent memory** — episodic (short-lived actions) and semantic (permanent knowledge) with vector search, auto-deduplication, and TTL pruning.
+
+🎭 **Customizable personality (Soul)** — inject a personality via file or string. It shapes the agent's tone, values, and decision-making across all prompts.
+
+🔒 **Safe by default** — destructive tools require explicit confirmation. Code runs in a sandbox (local or [OpenSandbox](https://opensandbox.dev)).
+
+---
+
+## Quick demo
 
 ```python
-import asyncio
 from klovis_agent import Agent, LLMConfig
 
-async def main():
-    agent = Agent(
-        llm=LLMConfig(api_key="sk-...", default_model="gpt-4o"),
-    )
-    result = await agent.run("Explain quantum computing in simple terms")
-    print(result.summary)
-
-asyncio.run(main())
+agent = Agent(
+    llm=LLMConfig(api_key="sk-...", default_model="gpt-4o"),
+)
+result = await agent.run("Explain quantum computing in simple terms")
+print(result.summary)
 ```
 
-### Daemon mode
+That's it. The agent plans, executes, verifies, and returns a structured result.
+
+<details>
+<summary><b>Daemon mode (continuous OODA loop)</b></summary>
 
 ```python
 from klovis_agent import Agent, LLMConfig, InboxPerceptionSource
@@ -67,18 +64,15 @@ agent = Agent(
 daemon = agent.as_daemon(interval_minutes=5, max_cycles=100)
 await daemon.run()
 ```
+</details>
 
-### CLI
+<details>
+<summary><b>CLI usage</b></summary>
 
 ```bash
-# Single-run
 python run.py "Write a blog post about AI agents"
-
-# Daemon
 python run.py --daemon --interval 5 --cycles 100
-
-# Options
-python run.py -v --data-dir ./my-data "Do something"
+python run.py --soul ./my-soul.md "Do something creative"
 python run.py --ephemeral "Quick test"
 ```
 
@@ -91,12 +85,10 @@ python run.py --ephemeral "Quick test"
 | `--data-dir PATH` | Persistent data directory | `~/.local/share/klovis` |
 | `--soul PATH` | Personality file (SOUL.md) | none |
 | `--ephemeral` | Temporary workspace (nothing persists) | off |
+</details>
 
----
-
-## Composition
-
-The agent is fully composable — tools, perceptions, and sandbox are all injectable:
+<details>
+<summary><b>Full composition example</b></summary>
 
 ```python
 from klovis_agent import Agent, LLMConfig
@@ -115,34 +107,34 @@ agent = Agent(
 )
 ```
 
-Presets are available:
+Presets are also available:
 
 ```python
 from klovis_agent.tools.presets import default_tools, minimal_tools
 
-# All standard tools
 tools = default_tools(workspace, sandbox, embedder, skill_store)
-
-# Minimal set (web search + KV memory)
 tools = minimal_tools()
 ```
+</details>
 
 ---
 
-## Execution loop (LangGraph)
+## How does it work?
+
+### Execution loop (LangGraph)
 
 Each run follows a 5-node graph:
 
 ```
                     ┌──────────┐
                     │   PLAN   │
-                    │ (LLM)    │
+                    │  (LLM)   │
                     └────┬─────┘
                          │
                          ▼
                     ┌──────────┐
               ┌────▶│ EXECUTE  │
-              │     │ (tool)   │
+              │     │  (tool)  │
               │     └────┬─────┘
               │          │
               │          ▼
@@ -156,25 +148,23 @@ Each run follows a 5-node graph:
               │          ▼                ▼
               │          │          ┌──────────┐
               └──────────┘          │ REPLAN   │
-                                    │ (LLM)    │
+                                    │  (LLM)   │
                                     └────┬─────┘
                                          │
                                          ▼
                                     ┌──────────┐
                                     │  FINISH  │
-                                    │ (summary)│
+                                    │(summary) │
                                     └──────────┘
 ```
 
-- **Plan**: the LLM breaks down the goal into steps and selects tools
-- **Execute**: each step is executed via the `ToolRegistry`
-- **Check**: the router decides whether to continue, retry, replan, or finish
-- **Replan**: if the plan fails, the LLM generates a new one with error context
-- **Finish**: final summary + memory consolidation
+- **Plan** — the LLM breaks down the goal into steps and selects tools
+- **Execute** — each step runs via the `ToolRegistry`
+- **Check** — the router decides: continue, retry, replan, or finish
+- **Replan** — on failure, the LLM generates a new plan with error context
+- **Finish** — final summary + memory consolidation
 
----
-
-## OODA loop (daemon mode)
+### OODA loop (daemon mode)
 
 ```
     ┌─────────────────────────────────────────────────┐
@@ -218,38 +208,17 @@ Each run follows a 5-node graph:
 
 The agent has a persistent two-zone memory, stored in SQLite with vector embeddings.
 
-![memory demo](./assets/demo-memory.gif)
-
-```
-                    ┌─────────────────────────────┐
-                    │     SemanticMemoryStore      │
-                    │        (SQLite + vectors)    │
-                    ├──────────────┬───────────────┤
-                    │   EPISODIC   │   SEMANTIC    │
-                    │              │               │
-                    │ Actions      │ Facts         │
-                    │ Events       │ Lessons       │
-                    │ Interactions │ Preferences   │
-                    │              │ Identity      │
-                    │              │ Skills        │
-                    ├──────────────┼───────────────┤
-                    │ TTL: 14 d    │ Permanent     │
-                    │ Score:       │ Score:        │
-                    │  sim×0.6     │  cosine       │
-                    │  +recency×0.4│  similarity   │
-                    │ Dedup:       │ Dedup:        │
-                    │  No          │  Yes (>0.9)   │
-                    └──────────────┴───────────────┘
-```
-
-### Two zones
+<p align="center">
+  <img src="./assets/demo-memory.gif" alt="memory demo" width="700">
+</p>
 
 | Zone | Content | TTL | Scoring | Deduplication |
 |------|---------|:---:|---------|:---:|
 | **episodic** | Actions taken, events, interactions | 14 days (auto-prune) | `similarity × 0.6 + recency × 0.4` | No (each action is unique) |
 | **semantic** | Facts, lessons, preferences, identity | Permanent | Pure cosine similarity | Yes (similarity > 0.9 → update in-place) |
 
-### Memory lifecycle
+<details>
+<summary><b>Memory lifecycle</b></summary>
 
 ```
 Run completed
@@ -276,109 +245,39 @@ recall_for_task()          Prune episodic (TTL) then search both zones
 Injected into decision and planning prompts
 ```
 
-### Migration
-
-The schema is backward-compatible. Older SQLite databases without a `zone` column are automatically migrated on first access (existing memories default to `semantic`). If the DB is read-only, the store operates in degraded mode without zones.
+The schema is backward-compatible. Older SQLite databases without a `zone` column are automatically migrated on first access.
+</details>
 
 ---
 
 ## Tools
 
-### Built-in tool catalog
+18 built-in tools across 7 categories:
 
-| Category | Tool | Description | Confirmation |
-|----------|------|-------------|:---:|
-| **Workspace** | `file_read` | Read a workspace file (with offset/limit) | |
-| | `file_write` | Write/overwrite a workspace file | |
-| | `file_edit` | Edit a file (replace / insert) | |
-| **Filesystem** | `fs_read` | Read a file by absolute path | |
-| | `fs_list` | List a directory | |
-| | `fs_mkdir` | Create a directory | |
-| | `fs_write` | Write a file (absolute path) | **Yes** |
-| | `fs_delete` | Delete a file/directory | **Yes** |
-| | `fs_move` | Move/rename | **Yes** |
-| | `fs_copy` | Copy | **Yes** |
-| **Shell** | `shell_command` | Run a command (with optional `cwd`) | **Yes** |
-| **Memory** | `memory` | Simple key-value memory | |
-| | `semantic_memory` | Two-zone vector memory | |
-| **Web** | `web_search` | Web search | |
-| | `http_request` | Arbitrary HTTP request | |
-| **Code** | `code_execution` | Sandboxed code execution | |
-| | `text_analysis` | Text analysis | |
-| **Skills** | `list_skills` | List available skills | |
-| | `read_skill` | Read a skill's content | |
+| Category | Tools |
+|----------|-------|
+| **Workspace** | `file_read`, `file_write`, `file_edit` |
+| **Filesystem** | `fs_read`, `fs_list`, `fs_mkdir`, `fs_write`, `fs_delete`, `fs_move`, `fs_copy` |
+| **Shell** | `shell_command` |
+| **Memory** | `memory` (key-value), `semantic_memory` (vector, two zones) |
+| **Web** | `web_search`, `http_request` |
+| **Code** | `code_execution`, `text_analysis` |
+| **Skills** | `list_skills`, `read_skill` |
 
-### Confirmation mechanism
-
-Destructive tools require interactive confirmation before execution:
-
-```
-⚠️  Confirmation required:
-  fs_delete(path=/home/user/important.txt)
-  Proceed? [y/N]
-```
-
-The `requires_confirmation` flag is configurable per tool and per instance:
+Destructive tools (`fs_delete`, `fs_write`, `shell_command`...) require interactive confirmation. The flag is configurable per tool:
 
 ```python
-from klovis_agent.tools.builtin import ShellCommandTool
-
-# Disable confirmation on shell (at your own risk)
 shell = ShellCommandTool(workspace, requires_confirmation=False)
-
-# Enable it on a tool that doesn't require it by default
-from klovis_agent.tools.builtin import WebSearchTool
-search = WebSearchTool(requires_confirmation=True)
 ```
 
----
-
-## Perception
-
-The perception system is the agent's sensory interface. Any external source can feed events to the daemon.
-
-### Included sources
-
-| Source | Module | Events |
-|--------|--------|--------|
-| **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` |
-| **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) |
-
-### Creating a custom source
-
-```python
-from klovis_agent import PerceptionSource
-from klovis_agent.perception.base import Event, EventKind
-
-class RSSPerceptionSource(PerceptionSource):
-    @property
-    def name(self) -> str:
-        return "rss"
-
-    async def poll(self) -> list[Event]:
-        # Your polling logic
-        return [
-            Event(
-                source="rss",
-                kind=EventKind.NEW_CONTENT,
-                title="New article: ...",
-                detail="...",
-                metadata={"url": "https://..."},
-            )
-        ]
-```
-
-Available event types: `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
-
----
-
-## Creating a custom tool
+<details>
+<summary><b>Creating a custom tool</b></summary>
 
 ```python
 from klovis_agent import BaseTool, ToolSpec, ToolResult
 
 class MyTool(BaseTool):
-    requires_confirmation = False  # True to require confirmation
+    requires_confirmation = False
 
     def spec(self) -> ToolSpec:
         return ToolSpec(
@@ -395,7 +294,6 @@ class MyTool(BaseTool):
 
     async def execute(self, inputs: dict) -> ToolResult:
         query = inputs["query"]
-        # Your logic
         return ToolResult(success=True, output={"result": f"Processed: {query}"})
 ```
 
@@ -407,6 +305,45 @@ agent = Agent(
     tools=[MyTool(), WebSearchTool()],
 )
 ```
+</details>
+
+---
+
+## Perception
+
+The perception system is the agent's sensory interface. Any external source can feed events to the daemon.
+
+| Source | Module | Events |
+|--------|--------|--------|
+| **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` |
+| **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) |
+
+Available event types: `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
+
+<details>
+<summary><b>Creating a custom perception source</b></summary>
+
+```python
+from klovis_agent import PerceptionSource
+from klovis_agent.perception.base import Event, EventKind
+
+class RSSPerceptionSource(PerceptionSource):
+    @property
+    def name(self) -> str:
+        return "rss"
+
+    async def poll(self) -> list[Event]:
+        return [
+            Event(
+                source="rss",
+                kind=EventKind.NEW_CONTENT,
+                title="New article: ...",
+                detail="...",
+                metadata={"url": "https://..."},
+            )
+        ]
+```
+</details>
 
 ---
 
@@ -414,50 +351,73 @@ agent = Agent(
 
 The **soul** defines the agent's personality: tone, style, values, identity. It is injected into all system prompts (plan, execute, replan, finish, decision).
 
-### Via the Python API
-
 ```python
 from pathlib import Path
 from klovis_agent import Agent, LLMConfig
 
 # From a file
-agent = Agent(
-    llm=LLMConfig(api_key="sk-..."),
-    soul=Path("./my-soul.md"),
-)
+agent = Agent(llm=LLMConfig(api_key="sk-..."), soul=Path("./my-soul.md"))
 
 # As raw text
-agent = Agent(
-    llm=LLMConfig(api_key="sk-..."),
-    soul="You are a pirate. You speak like one. Arrr.",
-)
+agent = Agent(llm=LLMConfig(api_key="sk-..."), soul="You are a pirate. Arrr.")
 
-# No soul (neutral agent, no personality injected)
+# No soul (neutral agent)
 agent = Agent(llm=LLMConfig(api_key="sk-..."))
 ```
 
-### Via the CLI
-
-```bash
-python run.py --soul ./my-soul.md "Write a blog post about AI agents"
-python run.py --daemon --soul ./my-soul.md
-```
-
-### Recommended SOUL.md structure
-
-A good soul contains these sections:
+<details>
+<summary><b>Recommended SOUL.md structure</b></summary>
 
 | Section | Purpose |
 |---------|---------|
 | **Identity** | Who the agent is, its name, its nature |
-| **Personality** | Character traits (curious, honest, playful…) |
+| **Personality** | Character traits (curious, honest, playful...) |
 | **Voice** | Writing style (tone, register, length) |
-| **Values** | Guiding principles (quality, authenticity…) |
-| **What you are NOT** | Explicit boundaries (not an assistant, not a content mill…) |
+| **Values** | Guiding principles (quality, authenticity...) |
+| **What you are NOT** | Explicit boundaries (not an assistant, not a content mill...) |
+</details>
+
+---
+
+## Configuration
+
+Environment variables (prefix `AGENT_`, delimiter `__` for nested objects):
+
+```bash
+export AGENT_LLM__API_KEY="sk-..."              # Required
+export AGENT_LLM__DEFAULT_MODEL="gpt-4o"        # Default model
+export AGENT_LLM__BASE_URL="https://api.openai.com/v1"
+export AGENT_LLM__MAX_TOKENS=4096
+export AGENT_LLM__TEMPERATURE=0.2
+export AGENT_MAX_ITERATIONS=25
+export AGENT_SANDBOX__BACKEND="local"            # "local" or "opensandbox"
+export AGENT_DATA_DIR="~/.local/share/klovis"
+```
+
+Or via a `.env` file at the project root (automatically loaded by `run.py`).
+
+<details>
+<summary><b>REST API</b></summary>
+
+```bash
+uvicorn klovis_agent.api:app --reload
+```
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/runs` | Create and execute an agent run |
+| `GET` | `/runs` | List runs |
+| `GET` | `/runs/{id}` | Run details |
+| `GET` | `/runs/{id}/logs` | Run logs |
+| `GET` | `/health` | Health check |
+</details>
 
 ---
 
 ## Architecture
+
+<details>
+<summary><b>Project structure</b></summary>
 
 ```
 klovis_agent/
@@ -490,8 +450,8 @@ klovis_agent/
 │   ├── presets.py           # default_tools(), minimal_tools()
 │   └── builtin/             # Built-in tools
 │       ├── file_tools.py    # file_read, file_write, file_edit
-│       ├── filesystem.py    # fs_read, fs_list, fs_mkdir, fs_write, fs_delete, fs_move, fs_copy
-│       ├── shell.py         # shell_command (with optional cwd)
+│       ├── filesystem.py    # fs_read, fs_list, fs_mkdir, fs_write, ...
+│       ├── shell.py         # shell_command
 │       ├── memory.py        # memory (key-value)
 │       ├── semantic_memory.py # semantic_memory (vector, two zones)
 │       ├── web.py           # web_search, http_request
@@ -511,54 +471,17 @@ klovis_agent/
 ├── sandbox/                 # Isolated code execution (Local / OpenSandbox)
 └── infra/                   # SQLite persistence
 ```
-
----
-
-## REST API
-
-```bash
-uvicorn klovis_agent.api:app --reload
-```
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `POST` | `/runs` | Create and execute an agent run |
-| `GET` | `/runs` | List runs |
-| `GET` | `/runs/{id}` | Run details |
-| `GET` | `/runs/{id}/logs` | Run logs |
-| `GET` | `/health` | Health check |
-
----
-
-## Configuration
-
-Environment variables (prefix `AGENT_`, delimiter `__` for nested objects):
-
-```bash
-# Required
-export AGENT_LLM__API_KEY="sk-..."
-
-# Optional
-export AGENT_LLM__DEFAULT_MODEL="gpt-4o"        # Default model
-export AGENT_LLM__BASE_URL="https://api.openai.com/v1"
-export AGENT_LLM__MAX_TOKENS=4096
-export AGENT_LLM__TEMPERATURE=0.2
-export AGENT_MAX_ITERATIONS=25
-export AGENT_SANDBOX__BACKEND="local"            # "local" or "opensandbox"
-export AGENT_DATA_DIR="~/.local/share/klovis"    # Persistent data
-```
-
-Or via a `.env` file at the project root (automatically loaded by `run.py`).
+</details>
 
 ---
 
 ## Design principles
 
-- **Composable**: tools, perceptions, memory, and sandbox are all injectable. Nothing is hardcoded.
-- **LLM ≠ Agent**: the LLM is a reasoning engine. The runtime (LangGraph) controls the loop, retries, and limits.
-- **Structured outputs**: no free-text parsing. The LLM produces JSON validated against schemas.
-- **Two-zone memory**: ephemeral actions (episodic) and permanent knowledge (semantic) live in separate spaces with different scoring and retention strategies.
-- **Explicit confirmation**: destructive operations require human validation. The flag is configurable per tool.
-- **Dynamic planning**: automatic replanning on failure, with error context injection.
-- **Sandbox**: generated code runs in isolation (local or OpenSandbox).
-- **Source-agnostic perception**: the daemon doesn't know where events come from. Any source implementing `PerceptionSource` can feed the loop.
+- **Composable** — tools, perceptions, memory, and sandbox are all injectable. Nothing is hardcoded.
+- **LLM ≠ Agent** — the LLM is a reasoning engine. The runtime (LangGraph) controls the loop, retries, and limits.
+- **Structured outputs** — no free-text parsing. The LLM produces JSON validated against schemas.
+- **Two-zone memory** — ephemeral actions (episodic) and permanent knowledge (semantic) live in separate spaces with different scoring and retention strategies.
+- **Explicit confirmation** — destructive operations require human validation. Configurable per tool.
+- **Dynamic planning** — automatic replanning on failure, with error context injection.
+- **Sandbox** — generated code runs in isolation (local or OpenSandbox).
+- **Source-agnostic perception** — the daemon doesn't know where events come from. Any source implementing `PerceptionSource` can feed the loop.
