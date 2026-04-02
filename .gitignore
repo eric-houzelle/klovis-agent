@@ -24,5 +24,9 @@ agent_workspace/
 # Databases
 *.db
 
+# Demo recordings (binary artifacts)
+assets/*.gif
+assets/*.cast
+
 # Environment
 .env

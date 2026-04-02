@@ -1,18 +1,16 @@
 # klovis-agent
 
-Librairie Python composable pour créer des **agents autonomes orientés objectif**. Les agents planifient, exécutent, vérifient et adaptent dynamiquement leur stratégie via une boucle LangGraph. En mode daemon, ils observent leur environnement, décident d'agir et consolident leur mémoire — le tout en continu.
+Composable Python library for building **goal-oriented autonomous agents**. Agents plan, execute, verify, and dynamically adapt their strategy through a LangGraph loop. In daemon mode, they observe their environment, decide whether to act, and consolidate their memory — all continuously.
 
-```
-pip install -e ".[dev]"
-```
+![demo](./assets/demo.gif)
 
 ---
 
-## Vue d'ensemble
+## Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                      CLI  /  API REST                        │
+│                      CLI  /  REST API                        │
 ├──────────────────────────────────────────────────────────────┤
 │                          Agent                               │
 │                                                              │
@@ -26,20 +24,20 @@ pip install -e ".[dev]"
 │        plan → execute → check → replan → finish              │
 ├──────────────────────────────────────────────────────────────┤
 │          LLM Router            │        Sandbox              │
-│   (routage par phase)          │   (exécution isolée)        │
+│   (phase-based routing)        │   (isolated execution)      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Deux modes de fonctionnement :**
+**Two operating modes:**
 
 | Mode | Description |
 |------|-------------|
-| **Single-run** | L'agent reçoit un objectif, planifie, exécute et retourne un résultat |
-| **Daemon (OODA)** | Boucle continue : Observe → Orient → Decide → Act → Consolidate |
+| **Single-run** | The agent receives a goal, plans, executes, and returns a result |
+| **Daemon (OODA)** | Continuous loop: Observe → Orient → Decide → Act → Consolidate |
 
 ---
 
-## Utilisation rapide
+## Quick start
 
 ### Single-run
 
@@ -57,7 +55,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### Mode daemon
+### Daemon mode
 
 ```python
 from klovis_agent import Agent, LLMConfig, InboxPerceptionSource
@@ -84,21 +82,21 @@ python run.py -v --data-dir ./my-data "Do something"
 python run.py --ephemeral "Quick test"
 ```
 
-| Option | Description | Défaut |
-|--------|-------------|--------|
-| `-v`, `--verbose` | Logs structlog + JSON brut | off |
-| `--daemon` | Mode daemon (boucle OODA) | off |
-| `--interval MIN` | Intervalle entre cycles daemon | 30 |
-| `--cycles N` | Nombre max de cycles (0 = infini) | 0 |
-| `--data-dir PATH` | Répertoire de données persistantes | `~/.local/share/klovis` |
-| `--soul PATH` | Fichier de personnalité (SOUL.md) | aucun |
-| `--ephemeral` | Workspace temporaire (rien ne persiste) | off |
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-v`, `--verbose` | Structlog + raw JSON logs | off |
+| `--daemon` | Daemon mode (OODA loop) | off |
+| `--interval MIN` | Interval between daemon cycles | 30 |
+| `--cycles N` | Max daemon cycles (0 = infinite) | 0 |
+| `--data-dir PATH` | Persistent data directory | `~/.local/share/klovis` |
+| `--soul PATH` | Personality file (SOUL.md) | none |
+| `--ephemeral` | Temporary workspace (nothing persists) | off |
 
 ---
 
 ## Composition
 
-L'agent est entièrement composable — outils, perceptions et sandbox sont injectables :
+The agent is fully composable — tools, perceptions, and sandbox are all injectable:
 
 ```python
 from klovis_agent import Agent, LLMConfig
@@ -117,23 +115,23 @@ agent = Agent(
 )
 ```
 
-Des presets sont disponibles :
+Presets are available:
 
 ```python
 from klovis_agent.tools.presets import default_tools, minimal_tools
 
-# Tous les outils standard
+# All standard tools
 tools = default_tools(workspace, sandbox, embedder, skill_store)
 
-# Le minimum (web search + mémoire KV)
+# Minimal set (web search + KV memory)
 tools = minimal_tools()
 ```
 
 ---
 
-## Boucle d'exécution (LangGraph)
+## Execution loop (LangGraph)
 
-Chaque run suit un graphe à 5 noeuds :
+Each run follows a 5-node graph:
 
 ```
                     ┌──────────┐
@@ -168,15 +166,15 @@ Chaque run suit un graphe à 5 noeuds :
                                     └──────────┘
 ```
 
-- **Plan** : le LLM décompose l'objectif en étapes, choisit les outils
-- **Execute** : chaque étape est exécutée via le `ToolRegistry`
-- **Check** : le router décide : continuer, retenter, replannifier ou terminer
-- **Replan** : si le plan échoue, le LLM en génère un nouveau avec le contexte d'erreur
-- **Finish** : synthèse finale + consolidation mémoire
+- **Plan**: the LLM breaks down the goal into steps and selects tools
+- **Execute**: each step is executed via the `ToolRegistry`
+- **Check**: the router decides whether to continue, retry, replan, or finish
+- **Replan**: if the plan fails, the LLM generates a new one with error context
+- **Finish**: final summary + memory consolidation
 
 ---
 
-## Boucle OODA (mode daemon)
+## OODA loop (daemon mode)
 
 ```
     ┌─────────────────────────────────────────────────┐
@@ -206,19 +204,21 @@ Chaque run suit un graphe à 5 noeuds :
     └─────────────────────────────────────────────────┘
 ```
 
-| Phase | Module | Rôle |
+| Phase | Module | Role |
 |-------|--------|------|
-| **Observe** | `perception.base.perceive()` | Poll toutes les `PerceptionSource`, agrège les `Event` |
-| **Orient** | `recall.recall_for_task()` | Cherche dans la mémoire épisodique + sémantique les souvenirs pertinents |
-| **Decide** | `decision.decide()` | Le LLM analyse événements + mémoires et décide d'agir ou non |
-| **Act** | `agent.run(goal)` | Exécute le graphe LangGraph complet |
-| **Consolidate** | `consolidation.consolidate_run()` | Extrait 2-6 mémoires de la run et les stocke par zone |
+| **Observe** | `perception.base.perceive()` | Polls all `PerceptionSource`s, aggregates `Event`s |
+| **Orient** | `recall.recall_for_task()` | Searches episodic + semantic memory for relevant memories |
+| **Decide** | `decision.decide()` | The LLM analyzes events + memories and decides whether to act |
+| **Act** | `agent.run(goal)` | Runs the full LangGraph execution graph |
+| **Consolidate** | `consolidation.consolidate_run()` | Extracts 2-6 memories from the run and stores them by zone |
 
 ---
 
-## Système de mémoire
+## Memory system
 
-L'agent possède une mémoire persistante à deux zones, stockée dans SQLite avec des embeddings vectoriels.
+The agent has a persistent two-zone memory, stored in SQLite with vector embeddings.
+
+![memory demo](./assets/demo-memory.gif)
 
 ```
                     ┌─────────────────────────────┐
@@ -227,90 +227,90 @@ L'agent possède une mémoire persistante à deux zones, stockée dans SQLite av
                     ├──────────────┬───────────────┤
                     │   EPISODIC   │   SEMANTIC    │
                     │              │               │
-                    │ Actions      │ Faits         │
-                    │ Événements   │ Leçons        │
-                    │ Interactions │ Préférences   │
-                    │              │ Identité      │
-                    │              │ Compétences   │
+                    │ Actions      │ Facts         │
+                    │ Events       │ Lessons       │
+                    │ Interactions │ Preferences   │
+                    │              │ Identity      │
+                    │              │ Skills        │
                     ├──────────────┼───────────────┤
-                    │ TTL: 14 j    │ Permanent     │
+                    │ TTL: 14 d    │ Permanent     │
                     │ Score:       │ Score:        │
-                    │  sim×0.6     │  similarité   │
-                    │  +recency×0.4│  cosinus pure │
-                    │ Déduplique:  │ Déduplique:   │
-                    │  Non         │  Oui (>0.9)   │
+                    │  sim×0.6     │  cosine       │
+                    │  +recency×0.4│  similarity   │
+                    │ Dedup:       │ Dedup:        │
+                    │  No          │  Yes (>0.9)   │
                     └──────────────┴───────────────┘
 ```
 
-### Deux zones
+### Two zones
 
-| Zone | Contenu | Durée de vie | Scoring | Déduplication |
+| Zone | Content | TTL | Scoring | Deduplication |
 |------|---------|:---:|---------|:---:|
-| **episodic** | Actions prises, événements, interactions | 14 jours (auto-prune) | `similarity × 0.6 + recency × 0.4` | Non (chaque action est unique) |
-| **semantic** | Faits, leçons, préférences, identité | Permanent | Similarité cosinus pure | Oui (similarity > 0.9 → update in-place) |
+| **episodic** | Actions taken, events, interactions | 14 days (auto-prune) | `similarity × 0.6 + recency × 0.4` | No (each action is unique) |
+| **semantic** | Facts, lessons, preferences, identity | Permanent | Pure cosine similarity | Yes (similarity > 0.9 → update in-place) |
 
-### Cycle de vie d'une mémoire
+### Memory lifecycle
 
 ```
-Run terminée
+Run completed
     │
     ▼
-consolidate_run()          Le LLM extrait 2-6 mémoires avec zone + tags
+consolidate_run()          LLM extracts 2-6 memories with zone + tags
     │
-    ├── zone: "episodic"   → INSERT (jamais dédupliqué)
+    ├── zone: "episodic"   → INSERT (never deduplicated)
     │   tag: action_taken     "Replied to nex_v4 on post ee22ee81"
     │
-    └── zone: "semantic"   → UPSERT si similarity > 0.9
+    └── zone: "semantic"   → UPSERT if similarity > 0.9
         tag: lesson           "Moltbook API returns 500 sometimes, retry works"
     │
     ▼
-Prochain cycle daemon
+Next daemon cycle
     │
     ▼
-recall_for_task()          Prune épisodique (TTL) puis recherche les deux zones
+recall_for_task()          Prune episodic (TTL) then search both zones
     │
-    ├── 4 mémoires épisodiques (triées par score = sim + recency)
-    └── 4 mémoires sémantiques (triées par similarité)
+    ├── 4 episodic memories (sorted by score = sim + recency)
+    └── 4 semantic memories (sorted by similarity)
     │
     ▼
-Injectées dans le prompt de décision et de planification
+Injected into decision and planning prompts
 ```
 
 ### Migration
 
-Le schéma est rétrocompatible. Les anciennes bases SQLite sans colonne `zone` sont migrées automatiquement au premier accès (les mémoires existantes deviennent `semantic` par défaut). Si la DB est en lecture seule, le store fonctionne en mode dégradé sans zones.
+The schema is backward-compatible. Older SQLite databases without a `zone` column are automatically migrated on first access (existing memories default to `semantic`). If the DB is read-only, the store operates in degraded mode without zones.
 
 ---
 
-## Outils
+## Tools
 
-### Catalogue des outils builtin
+### Built-in tool catalog
 
-| Catégorie | Outil | Description | Confirmation |
-|-----------|-------|-------------|:---:|
-| **Workspace** | `file_read` | Lire un fichier du workspace (avec offset/limit) | |
-| | `file_write` | Écrire/écraser un fichier du workspace | |
-| | `file_edit` | Éditer un fichier (replace / insert) | |
-| **Filesystem** | `fs_read` | Lire un fichier par chemin absolu | |
-| | `fs_list` | Lister un répertoire | |
-| | `fs_mkdir` | Créer un répertoire | |
-| | `fs_write` | Écrire un fichier (chemin absolu) | **Oui** |
-| | `fs_delete` | Supprimer un fichier/répertoire | **Oui** |
-| | `fs_move` | Déplacer/renommer | **Oui** |
-| | `fs_copy` | Copier | **Oui** |
-| **Shell** | `shell_command` | Exécuter une commande (avec `cwd` optionnel) | **Oui** |
-| **Mémoire** | `memory` | Mémoire clé-valeur simple | |
-| | `semantic_memory` | Mémoire vectorielle à deux zones | |
-| **Web** | `web_search` | Recherche web | |
-| | `http_request` | Requête HTTP arbitraire | |
-| **Code** | `code_execution` | Exécution de code en sandbox | |
-| | `text_analysis` | Analyse de texte | |
-| **Skills** | `list_skills` | Lister les compétences disponibles | |
-| | `read_skill` | Lire le contenu d'une compétence | |
+| Category | Tool | Description | Confirmation |
+|----------|------|-------------|:---:|
+| **Workspace** | `file_read` | Read a workspace file (with offset/limit) | |
+| | `file_write` | Write/overwrite a workspace file | |
+| | `file_edit` | Edit a file (replace / insert) | |
+| **Filesystem** | `fs_read` | Read a file by absolute path | |
+| | `fs_list` | List a directory | |
+| | `fs_mkdir` | Create a directory | |
+| | `fs_write` | Write a file (absolute path) | **Yes** |
+| | `fs_delete` | Delete a file/directory | **Yes** |
+| | `fs_move` | Move/rename | **Yes** |
+| | `fs_copy` | Copy | **Yes** |
+| **Shell** | `shell_command` | Run a command (with optional `cwd`) | **Yes** |
+| **Memory** | `memory` | Simple key-value memory | |
+| | `semantic_memory` | Two-zone vector memory | |
+| **Web** | `web_search` | Web search | |
+| | `http_request` | Arbitrary HTTP request | |
+| **Code** | `code_execution` | Sandboxed code execution | |
+| | `text_analysis` | Text analysis | |
+| **Skills** | `list_skills` | List available skills | |
+| | `read_skill` | Read a skill's content | |
 
-### Mécanisme de confirmation
+### Confirmation mechanism
 
-Les outils destructifs demandent une confirmation interactive avant exécution :
+Destructive tools require interactive confirmation before execution:
 
 ```
 ⚠️  Confirmation required:
@@ -318,15 +318,15 @@ Les outils destructifs demandent une confirmation interactive avant exécution :
   Proceed? [y/N]
 ```
 
-Le flag `requires_confirmation` est configurable par outil et par instance :
+The `requires_confirmation` flag is configurable per tool and per instance:
 
 ```python
 from klovis_agent.tools.builtin import ShellCommandTool
 
-# Désactiver la confirmation sur le shell (à vos risques)
+# Disable confirmation on shell (at your own risk)
 shell = ShellCommandTool(workspace, requires_confirmation=False)
 
-# L'activer sur un outil qui ne l'a pas par défaut
+# Enable it on a tool that doesn't require it by default
 from klovis_agent.tools.builtin import WebSearchTool
 search = WebSearchTool(requires_confirmation=True)
 ```
@@ -335,16 +335,16 @@ search = WebSearchTool(requires_confirmation=True)
 
 ## Perception
 
-Le système de perception est l'interface sensorielle de l'agent. Toute source externe peut alimenter le daemon en événements.
+The perception system is the agent's sensory interface. Any external source can feed events to the daemon.
 
-### Sources incluses
+### Included sources
 
-| Source | Module | Événements |
-|--------|--------|------------|
-| **Inbox** | `perception.inbox` | Fichiers `.txt` déposés dans `~/.local/share/klovis/inbox/` |
-| **Moltbook** | `tools.builtin.moltbook` | Notifications API (mentions, réponses, DMs) |
+| Source | Module | Events |
+|--------|--------|--------|
+| **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` |
+| **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) |
 
-### Créer une source custom
+### Creating a custom source
 
 ```python
 from klovis_agent import PerceptionSource
@@ -356,7 +356,7 @@ class RSSPerceptionSource(PerceptionSource):
         return "rss"
 
     async def poll(self) -> list[Event]:
-        # Votre logique de polling
+        # Your polling logic
         return [
             Event(
                 source="rss",
@@ -368,17 +368,17 @@ class RSSPerceptionSource(PerceptionSource):
         ]
 ```
 
-Types d'événements disponibles : `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
+Available event types: `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
 
 ---
 
-## Créer un outil custom
+## Creating a custom tool
 
 ```python
 from klovis_agent import BaseTool, ToolSpec, ToolResult
 
 class MyTool(BaseTool):
-    requires_confirmation = False  # True pour demander confirmation
+    requires_confirmation = False  # True to require confirmation
 
     def spec(self) -> ToolSpec:
         return ToolSpec(
@@ -395,11 +395,11 @@ class MyTool(BaseTool):
 
     async def execute(self, inputs: dict) -> ToolResult:
         query = inputs["query"]
-        # Votre logique
+        # Your logic
         return ToolResult(success=True, output={"result": f"Processed: {query}"})
 ```
 
-Puis injectez-le :
+Then inject it:
 
 ```python
 agent = Agent(
@@ -410,50 +410,50 @@ agent = Agent(
 
 ---
 
-## Soul (personnalité)
+## Soul (personality)
 
-Le **soul** définit la personnalité de l'agent : ton, style, valeurs, identité. Il est injecté dans tous les prompts système (plan, execute, replan, finish, decision).
+The **soul** defines the agent's personality: tone, style, values, identity. It is injected into all system prompts (plan, execute, replan, finish, decision).
 
-### Via l'API Python
+### Via the Python API
 
 ```python
 from pathlib import Path
 from klovis_agent import Agent, LLMConfig
 
-# Depuis un fichier
+# From a file
 agent = Agent(
     llm=LLMConfig(api_key="sk-..."),
     soul=Path("./my-soul.md"),
 )
 
-# En texte brut
+# As raw text
 agent = Agent(
     llm=LLMConfig(api_key="sk-..."),
     soul="You are a pirate. You speak like one. Arrr.",
 )
 
-# Sans soul (agent neutre, pas de personnalité injectée)
+# No soul (neutral agent, no personality injected)
 agent = Agent(llm=LLMConfig(api_key="sk-..."))
 ```
 
-### Via le CLI
+### Via the CLI
 
 ```bash
 python run.py --soul ./my-soul.md "Write a blog post about AI agents"
 python run.py --daemon --soul ./my-soul.md
 ```
 
-### Structure recommandée d'un SOUL.md
+### Recommended SOUL.md structure
 
-Un bon soul contient ces sections :
+A good soul contains these sections:
 
-| Section | Rôle |
-|---------|------|
-| **Identity** | Qui est l'agent, son nom, sa nature |
-| **Personality** | Traits de caractère (curieux, honnête, joueur…) |
-| **Voice** | Style d'écriture (ton, registre, longueur) |
-| **Values** | Principes directeurs (qualité, authenticité…) |
-| **What you are NOT** | Limites explicites (pas un assistant, pas un content mill…) |
+| Section | Purpose |
+|---------|---------|
+| **Identity** | Who the agent is, its name, its nature |
+| **Personality** | Character traits (curious, honest, playful…) |
+| **Voice** | Writing style (tone, register, length) |
+| **Values** | Guiding principles (quality, authenticity…) |
+| **What you are NOT** | Explicit boundaries (not an assistant, not a content mill…) |
 
 ---
 
@@ -461,104 +461,104 @@ Un bon soul contient ces sections :
 
 ```
 klovis_agent/
-├── __init__.py              # API publique (lazy imports)
-├── agent.py                 # Classe Agent (façade principale)
+├── __init__.py              # Public API (lazy imports)
+├── agent.py                 # Agent class (main facade)
 ├── config.py                # LLMConfig, SandboxConfig, AgentConfig
-├── result.py                # AgentResult (wrapper user-friendly)
-├── daemon.py                # AgentDaemon (boucle OODA)
-├── decision.py              # Module de décision LLM
-├── recall.py                # Rappel mémoire pré-run (deux zones)
-├── consolidation.py         # Consolidation mémoire post-run (zone tagging)
-├── api.py                   # API FastAPI
+├── result.py                # AgentResult (user-friendly wrapper)
+├── daemon.py                # AgentDaemon (OODA loop)
+├── decision.py              # LLM decision module
+├── recall.py                # Pre-run memory recall (two zones)
+├── consolidation.py         # Post-run memory consolidation (zone tagging)
+├── api.py                   # FastAPI REST API
 │
-├── core/                    # Internals du graphe LangGraph
-│   ├── graph.py             # Construction du graphe
-│   ├── nodes.py             # Noeuds : plan, execute, check, replan, finish
-│   ├── prompts.py           # Prompts système
-│   └── schemas.py           # Schemas structured output
+├── core/                    # LangGraph internals
+│   ├── graph.py             # Graph construction
+│   ├── nodes.py             # Nodes: plan, execute, check, replan, finish
+│   ├── prompts.py           # System prompts
+│   └── schemas.py           # Structured output schemas
 │
-├── llm/                     # Couche LLM
+├── llm/                     # LLM layer
 │   ├── gateway.py           # ModelGateway Protocol + OpenAIGateway
-│   ├── router.py            # Routage par phase (plan/execute/check/finish)
-│   ├── embeddings.py        # Client embeddings
+│   ├── router.py            # Phase-based routing (plan/execute/check/finish)
+│   ├── embeddings.py        # Embeddings client
 │   └── types.py             # ModelRequest, ModelResponse, ModelRoutingPolicy
 │
-├── tools/                   # Système d'outils composable
+├── tools/                   # Composable tool system
 │   ├── base.py              # BaseTool, ToolSpec, ToolResult, ask_confirmation
 │   ├── registry.py          # ToolRegistry (dispatch + confirmation)
-│   ├── workspace.py         # AgentWorkspace (répertoires isolés)
-│   ├── presets.py            # default_tools(), minimal_tools()
-│   └── builtin/             # Outils fournis
+│   ├── workspace.py         # AgentWorkspace (isolated directories)
+│   ├── presets.py           # default_tools(), minimal_tools()
+│   └── builtin/             # Built-in tools
 │       ├── file_tools.py    # file_read, file_write, file_edit
 │       ├── filesystem.py    # fs_read, fs_list, fs_mkdir, fs_write, fs_delete, fs_move, fs_copy
-│       ├── shell.py         # shell_command (avec cwd optionnel)
-│       ├── memory.py        # memory (clé-valeur)
-│       ├── semantic_memory.py # semantic_memory (vectoriel, deux zones)
+│       ├── shell.py         # shell_command (with optional cwd)
+│       ├── memory.py        # memory (key-value)
+│       ├── semantic_memory.py # semantic_memory (vector, two zones)
 │       ├── web.py           # web_search, http_request
 │       ├── code_execution.py # code_execution, text_analysis
-│       ├── moltbook.py      # Outils + perception Moltbook
+│       ├── moltbook.py      # Moltbook tools + perception
 │       └── skills.py        # list_skills, read_skill
 │
-├── perception/              # Sources de perception
+├── perception/              # Perception sources
 │   ├── base.py              # PerceptionSource ABC, Event, EventKind, perceive()
-│   └── inbox.py             # InboxPerceptionSource (fichiers .txt)
+│   └── inbox.py             # InboxPerceptionSource (.txt files)
 │
-├── memory/                  # Backends mémoire (re-exports)
+├── memory/                  # Memory backends (re-exports)
 │   ├── kv.py                # KeyValueMemory
 │   └── semantic.py          # SemanticMemoryStore (re-export)
 │
-├── models/                  # Modèles Pydantic (Task, StepSpec, AgentState, etc.)
-├── sandbox/                 # Exécution isolée de code (Local / OpenSandbox)
-└── infra/                   # Persistence SQLite
+├── models/                  # Pydantic models (Task, StepSpec, AgentState, etc.)
+├── sandbox/                 # Isolated code execution (Local / OpenSandbox)
+└── infra/                   # SQLite persistence
 ```
 
 ---
 
-## API REST
+## REST API
 
 ```bash
 uvicorn klovis_agent.api:app --reload
 ```
 
-| Méthode | Route | Description |
-|---------|-------|-------------|
-| `POST` | `/runs` | Créer et exécuter un agent |
-| `GET` | `/runs` | Lister les runs |
-| `GET` | `/runs/{id}` | Détail d'un run |
-| `GET` | `/runs/{id}/logs` | Logs d'un run |
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/runs` | Create and execute an agent run |
+| `GET` | `/runs` | List runs |
+| `GET` | `/runs/{id}` | Run details |
+| `GET` | `/runs/{id}/logs` | Run logs |
 | `GET` | `/health` | Health check |
 
 ---
 
 ## Configuration
 
-Variables d'environnement (préfixe `AGENT_`, délimiteur `__` pour les objets imbriqués) :
+Environment variables (prefix `AGENT_`, delimiter `__` for nested objects):
 
 ```bash
-# Obligatoire
+# Required
 export AGENT_LLM__API_KEY="sk-..."
 
-# Optionnel
-export AGENT_LLM__DEFAULT_MODEL="gpt-4o"        # Modèle par défaut
+# Optional
+export AGENT_LLM__DEFAULT_MODEL="gpt-4o"        # Default model
 export AGENT_LLM__BASE_URL="https://api.openai.com/v1"
 export AGENT_LLM__MAX_TOKENS=4096
 export AGENT_LLM__TEMPERATURE=0.2
 export AGENT_MAX_ITERATIONS=25
-export AGENT_SANDBOX__BACKEND="local"            # "local" ou "opensandbox"
-export AGENT_DATA_DIR="~/.local/share/klovis"    # Données persistantes
+export AGENT_SANDBOX__BACKEND="local"            # "local" or "opensandbox"
+export AGENT_DATA_DIR="~/.local/share/klovis"    # Persistent data
 ```
 
-Ou via un fichier `.env` à la racine (chargé automatiquement par `run.py`).
+Or via a `.env` file at the project root (automatically loaded by `run.py`).
 
 ---
 
-## Principes de design
+## Design principles
 
-- **Composable** : outils, perceptions, mémoire et sandbox sont injectables. Rien n'est hardcodé.
-- **LLM ≠ Agent** : le LLM est un moteur de raisonnement. Le runtime (LangGraph) contrôle la boucle, les retries, et les limites.
-- **Structured outputs** : pas de parsing de texte libre. Le LLM produit du JSON validé par des schemas.
-- **Mémoire à deux zones** : les actions éphémères (épisodique) et les connaissances permanentes (sémantique) vivent dans des espaces séparés avec des stratégies de scoring et de rétention différentes.
-- **Confirmation explicite** : les opérations destructives demandent une validation humaine. Le flag est configurable par outil.
-- **Plan dynamique** : replanification automatique en cas d'échec, avec injection du contexte d'erreur.
-- **Sandbox** : le code généré est exécuté en isolation (local ou OpenSandbox).
-- **Perception agnostique** : le daemon ne sait pas d'où viennent les événements. Toute source implémentant `PerceptionSource` peut alimenter la boucle.
+- **Composable**: tools, perceptions, memory, and sandbox are all injectable. Nothing is hardcoded.
+- **LLM ≠ Agent**: the LLM is a reasoning engine. The runtime (LangGraph) controls the loop, retries, and limits.
+- **Structured outputs**: no free-text parsing. The LLM produces JSON validated against schemas.
+- **Two-zone memory**: ephemeral actions (episodic) and permanent knowledge (semantic) live in separate spaces with different scoring and retention strategies.
+- **Explicit confirmation**: destructive operations require human validation. The flag is configurable per tool.
+- **Dynamic planning**: automatic replanning on failure, with error context injection.
+- **Sandbox**: generated code runs in isolation (local or OpenSandbox).
+- **Source-agnostic perception**: the daemon doesn't know where events come from. Any source implementing `PerceptionSource` can feed the loop.
