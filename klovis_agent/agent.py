@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from ulid import ULID
 
-from klovis_agent.config import LLMConfig, SandboxConfig
+from klovis_agent.config import EmbeddingConfig, LLMConfig, SandboxConfig
 from klovis_agent.console import Console
 from klovis_agent.consolidation import consolidate_run
 from klovis_agent.core.graph import build_agent_graph
@@ -41,6 +41,7 @@ from klovis_agent.tools.builtin.filesystem import (
     FsReadTool,
     FsWriteTool,
 )
+from klovis_agent.tools.builtin.github import bootstrap_github
 from klovis_agent.tools.builtin.memory import MemoryTool
 from klovis_agent.tools.builtin.moltbook import bootstrap_moltbook
 from klovis_agent.tools.builtin.semantic_memory import (
@@ -120,6 +121,7 @@ class Agent:
         self,
         llm: LLMConfig,
         *,
+        embedding: EmbeddingConfig | None = None,
         tools: list[BaseTool] | None = None,
         perceptions: list[PerceptionSource] | None = None,
         sandbox: SandboxConfig | SandboxExecutionService | None = None,
@@ -144,10 +146,11 @@ class Agent:
             policy=llm.routing_policy,
         )
 
+        emb = embedding or EmbeddingConfig()
         self._embedder = EmbeddingClient(
-            api_key=llm.api_key,
-            base_url=llm.base_url,
-            model="BGE-M3",
+            api_key=emb.api_key or llm.api_key,
+            base_url=emb.base_url or llm.base_url,
+            model=emb.model,
         )
 
         self._workspace = AgentWorkspace(
@@ -168,6 +171,7 @@ class Agent:
         self._soul = self._load_soul(soul)
 
         self._semantic_store: SemanticMemoryStore | None = None
+        self._github_auth = None
         self._tool_registry = self._build_registry(tools)
         self._max_iterations = max_iterations
 
@@ -232,6 +236,10 @@ class Agent:
             registry, self._llm, workspace=self._workspace,
         )
 
+        self._github_auth = bootstrap_github(
+            registry, scratch_dir=self._workspace.scratch.root,
+        )
+
         return registry
 
     async def run(self, goal: str, **kwargs: Any) -> AgentResult:
@@ -271,6 +279,16 @@ class Agent:
                     },
                 })
                 self._console.recall(recalled)
+
+        if self._skill_store:
+            skill_names = [s.name for s in self._skill_store.list_skills()]
+            if skill_names:
+                task = task.model_copy(update={
+                    "context": {
+                        **task.context,
+                        "available_skills": skill_names,
+                    },
+                })
 
         initial_state = AgentState(
             run_id=run_id,

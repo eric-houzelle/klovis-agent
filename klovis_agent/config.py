@@ -36,12 +36,25 @@ class LLMConfig(BaseModel):
     )
 
 
+class EmbeddingConfig(BaseModel):
+    """Embedding provider configuration.
+
+    When fields are left empty, the agent falls back to the main LLM config
+    so that a single provider setup keeps working without extra env vars.
+    """
+
+    base_url: str = ""
+    api_key: str = ""
+    model: str = "BGE-M3"
+
+
 class AgentConfig(BaseSettings):
     """Centralized agent configuration, loaded from environment variables."""
 
     model_config = {"env_prefix": "AGENT_", "env_nested_delimiter": "__"}
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     max_iterations: int = 25
     verbose: bool = False
 

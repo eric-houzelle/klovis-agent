@@ -9,6 +9,10 @@ from klovis_agent.tools.builtin.filesystem import (
     FsReadTool,
     FsWriteTool,
 )
+from klovis_agent.tools.builtin.github import (
+    GitHubPerceptionSource,
+    bootstrap_github,
+)
 from klovis_agent.tools.builtin.memory import MemoryTool
 from klovis_agent.tools.builtin.moltbook import (
     MoltbookPerceptionSource,
@@ -35,6 +39,7 @@ __all__ = [
     "FsMoveTool",
     "FsReadTool",
     "FsWriteTool",
+    "GitHubPerceptionSource",
     "HttpRequestTool",
     "ListSkillsTool",
     "MemoryTool",
@@ -47,5 +52,6 @@ __all__ = [
     "SkillStore",
     "TextAnalysisTool",
     "WebSearchTool",
+    "bootstrap_github",
     "bootstrap_moltbook",
 ]

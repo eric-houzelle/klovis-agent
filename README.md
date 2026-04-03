@@ -252,7 +252,7 @@ The schema is backward-compatible. Older SQLite databases without a `zone` colum
 
 ## Tools
 
-18 built-in tools across 7 categories:
+32 built-in tools across 8 categories:
 
 | Category | Tools |
 |----------|-------|
@@ -262,6 +262,7 @@ The schema is backward-compatible. Older SQLite databases without a `zone` colum
 | **Memory** | `memory` (key-value), `semantic_memory` (vector, two zones) |
 | **Web** | `web_search`, `http_request` |
 | **Code** | `code_execution`, `text_analysis` |
+| **GitHub** | `github_get_repo`, `github_read_file`, `github_list_files`, `github_create_branch`, `github_commit_files`, `github_create_pr`, `github_list_issues`, `github_list_prs`, `github_get_pr`, `github_search_code`, `github_clone_repo`, `github_create_issue`, `github_comment_issue`, `github_get_check_runs` |
 | **Skills** | `list_skills`, `read_skill` |
 
 Destructive tools (`fs_delete`, `fs_write`, `shell_command`...) require interactive confirmation. The flag is configurable per tool:
@@ -317,6 +318,7 @@ The perception system is the agent's sensory interface. Any external source can 
 |--------|--------|--------|
 | **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` |
 | **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) |
+| **GitHub** | `tools.builtin.github` | Repo notifications, issues, PRs, pushes (optional — requires credentials) |
 
 Available event types: `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
 
@@ -397,6 +399,43 @@ export AGENT_DATA_DIR="~/.local/share/klovis"
 Or via a `.env` file at the project root (automatically loaded by `run.py`).
 
 <details>
+<summary><b>GitHub integration (optional)</b></summary>
+
+The agent can read code, create branches, commit files, and open pull requests on GitHub. Authentication supports either a **GitHub App** (recommended) or a **Personal Access Token**.
+
+**GitHub App:**
+
+```bash
+export GITHUB_APP_ID="123456"
+export GITHUB_APP_PRIVATE_KEY_PATH="~/.local/share/klovis/github-app-key.pem"
+export GITHUB_APP_INSTALLATION_ID="789012"
+```
+
+**Personal Access Token:**
+
+```bash
+export GITHUB_TOKEN="github_pat_..."
+```
+
+**Daemon perception** — configure which repos to watch in `run.py`:
+
+```python
+_GITHUB_REPOS = [
+    {"owner": "your-username", "repo": "your-repo", "issue_labels": ["agent"]},
+    {"owner": "your-username", "repo": "other-project"},
+]
+```
+
+Each entry creates a `GitHubPerceptionSource` instance. The agent observes all of them during its OODA loop. If no GitHub credentials are set, the tools are simply not registered — no error, no dependency.
+
+Install the optional crypto dependency for GitHub App auth:
+
+```bash
+pip install "klovis-agent[github]"
+```
+</details>
+
+<details>
 <summary><b>REST API</b></summary>
 
 ```bash
@@ -457,6 +496,7 @@ klovis_agent/
 │       ├── web.py           # web_search, http_request
 │       ├── code_execution.py # code_execution, text_analysis
 │       ├── moltbook.py      # Moltbook tools + perception
+│       ├── github.py        # GitHub tools + perception (optional)
 │       └── skills.py        # list_skills, read_skill
 │
 ├── perception/              # Perception sources

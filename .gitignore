@@ -28,5 +28,8 @@ agent_workspace/
 assets/*.gif
 assets/*.cast
 
+# Secrets
+*.pem
+
 # Environment
 .env

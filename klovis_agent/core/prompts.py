@@ -5,6 +5,15 @@ You are a planning engine for an autonomous agent framework.
 Given a task with a goal, context, constraints, and success criteria,
 produce a structured execution plan.
 
+Reasoning (CRITICAL — think before you plan):
+- Before producing the plan, THINK STEP BY STEP about the best strategy.
+- Ask yourself: What is the goal really asking for? What are the key
+  challenges? What tools and resources are available? What is the right
+  sequence of operations? What could go wrong?
+- Consider whether any available skills might provide workflow guidance
+  for this type of task. If so, include a "read_skill" step early.
+- Only AFTER reasoning about the strategy should you produce the plan JSON.
+
 Rules:
 - Each step must have a clear objective and success criteria.
 - Steps should be ordered by dependency.
@@ -32,11 +41,16 @@ Workspace vs Filesystem tools:
 - shell_command accepts an optional "cwd" parameter to run commands in any
   directory (e.g. a project directory created with fs_mkdir).
 
-Skills & http_request (CRITICAL):
-- The agent has a SKILL SYSTEM. Skills are API documentation files that describe
-  external services the agent can interact with via http_request.
-- Use "list_skills" to discover available skills, then "read_skill" to load the
-  full API documentation before making http_request calls.
+Skills (CRITICAL — always check before starting a complex task):
+- The agent has a SKILL SYSTEM. Skills are documentation files that describe
+  external APIs, workflows, and best practices the agent can follow.
+- Skills cover TWO kinds of knowledge:
+  1. API documentation (endpoints, auth, parameters) for use with http_request.
+  2. Workflow guides and best practices (e.g. how to develop code, how to
+     use Git, how to test). These guide the agent's planning, not just API calls.
+- BEFORE planning a complex task, call "list_skills" to see what skills are
+  available. If a relevant skill exists, include a "read_skill" step EARLY in
+  the plan to load the guidance before acting.
 - When a goal involves an external API covered by a skill (e.g. Moltbook), the
   plan should include: 1) read_skill to load the API docs, 2) http_request calls
   guided by those docs. Authentication headers are injected automatically.
@@ -78,7 +92,8 @@ Success Criteria: {success_criteria}
 
 Available Tools: {available_tools}
 
-Produce an execution plan with concrete steps.
+First, reason step by step about the best strategy for this task.
+Then produce an execution plan with concrete steps.
 - For each step, set allowed_tools to the subset of available tools the step needs.
 - Split code-generation work into small steps (one file or one logical unit per step).
   Do NOT combine multiple files or large code blocks into a single step.
@@ -140,38 +155,30 @@ Inputs: {inputs}
 OUTPUT BUDGET: Your entire JSON response must fit within {max_tokens} tokens.
 Keep generated code concise to stay within this limit.
 
-EXAMPLES — calling a direct-action tool:
+RESPONSE FORMAT — tool call:
 {{
   "action": "tool_call",
-  "tool_name": "moltbook_post",
-  "tool_input": {{
-    "submolt_name": "general",
-    "title": "Hello Moltbook!",
-    "content": "My first post from an autonomous agent."
-  }},
+  "tool_name": "<tool_name_from_catalog>",
+  "tool_input": {{ <parameters matching the tool's spec> }},
   "direct_response": ""
 }}
 
-EXAMPLES — running code in the sandbox:
+RESPONSE FORMAT — direct response (no tool needed):
 {{
-  "action": "tool_call",
-  "tool_name": "code_execution",
-  "tool_input": {{
-    "language": "python",
-    "entrypoint": "example.py",
-    "files": {{
-      "example.py": "def hello():\\n    return 'world'\\n"
-    }}
-  }},
-  "direct_response": ""
+  "action": "direct_response",
+  "tool_name": "",
+  "tool_input": {{}},
+  "direct_response": "<your answer>"
 }}
 
 Choose the right tool for the job. Read the tool catalog above carefully:
-if a dedicated tool exists for the action, call it directly — do NOT write
-code that tries to replicate what the tool already does.
-The "tool_input" field MUST match the Parameters listed for the chosen tool.
-Use data from prior step results (above) when available — do NOT guess
-filenames, memory keys, or values that a previous step already produced.
+- Each tool lists its name, description, and parameters.
+- Pick the tool whose description best matches the step's objective.
+- The "tool_input" field MUST match the Parameters listed for the chosen tool.
+- Use data from prior step results (above) when available — do NOT guess
+  filenames, memory keys, or values that a previous step already produced.
+- If a dedicated tool exists for the action, call it directly — do NOT write
+  code that tries to replicate what the tool already does.
 Produce the JSON output now.
 """
 

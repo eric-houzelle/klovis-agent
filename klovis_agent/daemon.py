@@ -25,6 +25,7 @@ from klovis_agent.perception.base import (
 )
 from klovis_agent.perception.inbox import InboxPerceptionSource
 from klovis_agent.recall import recall_for_task
+from klovis_agent.tools.builtin.github import GitHubPerceptionSource
 from klovis_agent.tools.builtin.moltbook import MoltbookPerceptionSource
 from klovis_agent.tools.builtin.semantic_memory import SemanticMemoryStore
 
@@ -108,9 +109,24 @@ class AgentDaemon:
             except Exception as exc:
                 logger.warning("daemon_mark_read_failed", error=str(exc))
 
+        github_src = self._find_github_source()
+        if github_src and acted_events:
+            github_events = [e for e in acted_events if e.source == "github"]
+            if github_events:
+                try:
+                    await github_src.mark_notifications_read()
+                except Exception as exc:
+                    logger.warning("daemon_github_mark_read_failed", error=str(exc))
+
     def _find_moltbook_source(self) -> MoltbookPerceptionSource | None:
         for s in self._sources:
             if isinstance(s, MoltbookPerceptionSource):
+                return s
+        return None
+
+    def _find_github_source(self) -> GitHubPerceptionSource | None:
+        for s in self._sources:
+            if isinstance(s, GitHubPerceptionSource):
                 return s
         return None
 

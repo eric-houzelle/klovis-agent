@@ -15,6 +15,20 @@ from dotenv import load_dotenv
 
 from klovis_agent import Agent, AgentConfig, InboxPerceptionSource
 
+# ---------------------------------------------------------------------------
+# GitHub repos to watch in daemon mode.
+# Each entry creates a GitHubPerceptionSource.  Add, remove, or edit entries
+# as needed — the agent will observe all of them during its OODA loop.
+# ---------------------------------------------------------------------------
+_GITHUB_REPOS: list[dict] = [
+    {
+        "owner": "eric-houzelle",
+        "repo": "klovis-agent",
+        "issue_labels": ["agent"],
+    },
+    # {"owner": "eric-houzelle", "repo": "other-project"},
+]
+
 _HELP = """\
 Usage: python run.py [OPTIONS] [GOAL...]
 
@@ -81,6 +95,7 @@ async def _run_single(
 ) -> None:
     agent = Agent(
         llm=config.llm,
+        embedding=config.embedding,
         sandbox=config.sandbox,
         max_iterations=config.max_iterations,
         verbose=verbose,
@@ -128,6 +143,28 @@ def _build_perception_sources() -> list:
     except Exception:
         pass
 
+    try:
+        from klovis_agent.tools.builtin.github import (
+            GitHubPerceptionSource,
+            _GitHubAuth,
+            _load_github_config,
+        )
+
+        gh_config = _load_github_config()
+        if gh_config:
+            auth = _GitHubAuth(gh_config)
+            for repo_spec in _GITHUB_REPOS:
+                sources.append(
+                    GitHubPerceptionSource(
+                        owner=repo_spec["owner"],
+                        repo=repo_spec["repo"],
+                        auth=auth,
+                        issue_labels=repo_spec.get("issue_labels", []),
+                    )
+                )
+    except Exception:
+        pass
+
     return sources
 
 
@@ -143,6 +180,7 @@ async def _run_daemon(
 
     agent = Agent(
         llm=config.llm,
+        embedding=config.embedding,
         sandbox=config.sandbox,
         max_iterations=config.max_iterations,
         verbose=verbose,
