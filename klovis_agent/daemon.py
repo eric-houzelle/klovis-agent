@@ -25,6 +25,10 @@ from klovis_agent.perception.base import (
 )
 from klovis_agent.perception.inbox import InboxPerceptionSource
 from klovis_agent.recall import recall_for_task
+from klovis_agent.tools.builtin.discord_bot import (
+    DiscordPerceptionSource,
+    format_discord_reply,
+)
 from klovis_agent.tools.builtin.github import GitHubPerceptionSource
 from klovis_agent.tools.builtin.moltbook import MoltbookPerceptionSource
 from klovis_agent.tools.builtin.semantic_memory import SemanticMemoryStore
@@ -124,6 +128,12 @@ class AgentDaemon:
                 return s
         return None
 
+    def _find_discord_source(self) -> DiscordPerceptionSource | None:
+        for s in self._sources:
+            if isinstance(s, DiscordPerceptionSource):
+                return s
+        return None
+
     def _find_github_source(self) -> GitHubPerceptionSource | None:
         for s in self._sources:
             if isinstance(s, GitHubPerceptionSource):
@@ -146,11 +156,40 @@ class AgentDaemon:
             return False
 
         inbox = self._find_inbox_source()
+        discord_src = self._find_discord_source()
 
         for req in requests:
             goal = req.detail or req.title
+            if req.source == "discord":
+                goal = (
+                    f"{goal}\n\n"
+                    "Discord reply requirements:\n"
+                    "- Provide a clear, final user-facing answer.\n"
+                    "- Use the same language as the user's message.\n"
+                    "- If you create a file, still include the actual content in the reply."
+                )
             self._con._ts_print(f"Request from {req.source}: {goal[:120]}")
-            await self._run_task(goal)
+
+            try:
+                result = await self._agent.run(goal)
+                self._con.run_result(
+                    result.status,
+                    result.iteration_count,
+                    len(result.steps),
+                    result.summary or "",
+                )
+
+                if discord_src and req.source == "discord":
+                    await discord_src.send_reply(
+                        req.metadata, format_discord_reply(result),
+                    )
+            except Exception as exc:
+                self._con.step_failed(f"Run crashed: {exc}")
+                logger.error("daemon_request_run_failed", error=str(exc))
+                if discord_src and req.source == "discord":
+                    await discord_src.send_reply(
+                        req.metadata, f"Erreur lors de l'exécution : {exc}",
+                    )
 
             if inbox and req.metadata.get("file"):
                 inbox.archive(req.metadata["file"])
@@ -232,6 +271,32 @@ class AgentDaemon:
         elif not handled_requests:
             self._con._ts_print("Nothing to do. Staying silent.")
 
+    async def _start_sources(self) -> None:
+        """Initialize perception sources that require async startup."""
+        for source in self._sources:
+            if hasattr(source, "start") and callable(source.start):
+                try:
+                    await source.start()
+                except Exception as exc:
+                    logger.error(
+                        "perception_source_start_failed",
+                        source=source.name,
+                        error=str(exc),
+                    )
+
+    async def _stop_sources(self) -> None:
+        """Gracefully shut down perception sources."""
+        for source in self._sources:
+            if hasattr(source, "stop") and callable(source.stop):
+                try:
+                    await source.stop()
+                except Exception as exc:
+                    logger.warning(
+                        "perception_source_stop_failed",
+                        source=source.name,
+                        error=str(exc),
+                    )
+
     async def run(self) -> None:
         source_names = [s.name for s in self._sources]
         self._con.daemon_start(
@@ -242,6 +307,8 @@ class AgentDaemon:
             self._con._ts_print(
                 "WARNING: No perception sources. Daemon has nothing to observe."
             )
+
+        await self._start_sources()
 
         try:
             while True:
@@ -268,3 +335,5 @@ class AgentDaemon:
             logger.error("daemon_fatal", error=str(exc))
             self._con.daemon_stop(f"crash: {exc}")
             raise
+        finally:
+            await self._stop_sources()

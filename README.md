@@ -319,6 +319,7 @@ The perception system is the agent's sensory interface. Any external source can 
 | **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` |
 | **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) |
 | **GitHub** | `tools.builtin.github` | Repo notifications, issues, PRs, pushes (optional — requires credentials) |
+| **Discord** | `tools.builtin.discord_bot` | DMs and @mentions via Discord bot (optional — requires bot token) |
 
 Available event types: `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
 
@@ -436,6 +437,38 @@ pip install "klovis-agent[github]"
 </details>
 
 <details>
+<summary><b>Discord integration (optional)</b></summary>
+
+Chat with your agent in real time through Discord DMs or @mentions — just like messaging a person on WhatsApp.
+
+**1. Create a Discord bot:**
+
+1. Go to https://discord.com/developers/applications → **New Application**
+2. **Bot** tab → **Reset Token** → copy the token
+3. Enable **Message Content Intent** (Bot → Privileged Gateway Intents)
+4. **OAuth2** → **URL Generator** → check `bot` scope + `Send Messages`, `Read Message History` permissions
+5. Use the generated link to invite the bot to your server
+
+**2. Configure environment:**
+
+```bash
+export DISCORD_BOT_TOKEN="your-bot-token"
+export DISCORD_ALLOWED_USERS="123456789,987654321"   # optional — restrict to specific user IDs
+```
+
+Leave `DISCORD_ALLOWED_USERS` empty to allow anyone to interact with the bot (not recommended on public servers).
+
+**3. Run in daemon mode:**
+
+```bash
+python run.py --daemon --interval 0.5
+```
+
+The bot connects automatically when a `DISCORD_BOT_TOKEN` is detected. You can DM the bot directly or @mention it in any channel it has access to. The agent processes each message as a goal, executes it, and replies with the result.
+
+</details>
+
+<details>
 <summary><b>REST API</b></summary>
 
 ```bash
@@ -497,6 +530,7 @@ klovis_agent/
 │       ├── code_execution.py # code_execution, text_analysis
 │       ├── moltbook.py      # Moltbook tools + perception
 │       ├── github.py        # GitHub tools + perception (optional)
+│       ├── discord_bot.py   # Discord bot perception (optional)
 │       └── skills.py        # list_skills, read_skill
 │
 ├── perception/              # Perception sources

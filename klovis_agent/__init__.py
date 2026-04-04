@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from klovis_agent.perception.inbox import InboxPerceptionSource
     from klovis_agent.result import AgentResult
     from klovis_agent.tools.base import BaseTool, ToolResult, ToolSpec
+    from klovis_agent.tools.builtin.discord_bot import DiscordPerceptionSource
     from klovis_agent.tools.builtin.github import GitHubPerceptionSource
     from klovis_agent.tools.builtin.moltbook import MoltbookPerceptionSource
     from klovis_agent.tools.registry import ToolRegistry
@@ -24,6 +25,7 @@ __all__ = [
     "AgentDaemon",
     "AgentResult",
     "BaseTool",
+    "DiscordPerceptionSource",
     "EmbeddingConfig",
     "GitHubPerceptionSource",
     "InboxPerceptionSource",
@@ -45,6 +47,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "AgentDaemon": ("klovis_agent.daemon", "AgentDaemon"),
     "AgentResult": ("klovis_agent.result", "AgentResult"),
     "BaseTool": ("klovis_agent.tools.base", "BaseTool"),
+    "DiscordPerceptionSource": ("klovis_agent.tools.builtin.discord_bot", "DiscordPerceptionSource"),
     "EmbeddingConfig": ("klovis_agent.config", "EmbeddingConfig"),
     "InboxPerceptionSource": ("klovis_agent.perception.inbox", "InboxPerceptionSource"),
     "LLMConfig": ("klovis_agent.config", "LLMConfig"),

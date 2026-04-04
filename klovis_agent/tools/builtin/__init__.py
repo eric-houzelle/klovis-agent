@@ -9,6 +9,7 @@ from klovis_agent.tools.builtin.filesystem import (
     FsReadTool,
     FsWriteTool,
 )
+from klovis_agent.tools.builtin.discord_bot import DiscordPerceptionSource
 from klovis_agent.tools.builtin.github import (
     GitHubPerceptionSource,
     bootstrap_github,
@@ -29,6 +30,7 @@ from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
 
 __all__ = [
     "CodeExecutionTool",
+    "DiscordPerceptionSource",
     "FileEditTool",
     "FileReadTool",
     "FileWriteTool",

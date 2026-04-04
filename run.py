@@ -144,6 +144,23 @@ def _build_perception_sources() -> list:
         pass
 
     try:
+        from klovis_agent.tools.builtin.discord_bot import (
+            DiscordPerceptionSource,
+            load_discord_config,
+        )
+
+        discord_config = load_discord_config()
+        if discord_config:
+            sources.append(
+                DiscordPerceptionSource(
+                    token=discord_config["token"],
+                    allowed_user_ids=discord_config.get("allowed_user_ids"),
+                )
+            )
+    except Exception:
+        pass
+
+    try:
         from klovis_agent.tools.builtin.github import (
             GitHubPerceptionSource,
             _GitHubAuth,

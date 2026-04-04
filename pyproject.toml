@@ -20,6 +20,7 @@ dependencies = [
     "opensandbox",
     "opensandbox-code-interpreter",
     "ddgs>=9.0.0",
+    "discord.py>=2.3.0",
 ]
 
 [dependency-groups]
