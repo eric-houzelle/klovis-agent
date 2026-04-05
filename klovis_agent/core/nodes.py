@@ -186,6 +186,32 @@ def _short(val: Any) -> str:
     return s[:60] + "..." if len(s) > 60 else s
 
 
+def _record_llm_usage(
+    state: dict[str, Any],
+    *,
+    phase: str,
+    usage: dict[str, Any],
+    con: Any,
+) -> None:
+    prompt = int(usage.get("prompt_tokens", 0) or 0)
+    completion = int(usage.get("completion_tokens", 0) or 0)
+    total = int(usage.get("total_tokens", prompt + completion) or 0)
+    if total <= 0 and prompt <= 0 and completion <= 0:
+        return
+
+    token_usage = state.get("_token_usage", {})
+    token_usage["prompt_tokens"] = int(token_usage.get("prompt_tokens", 0)) + prompt
+    token_usage["completion_tokens"] = int(
+        token_usage.get("completion_tokens", 0),
+    ) + completion
+    token_usage["total_tokens"] = int(token_usage.get("total_tokens", 0)) + total
+    token_usage["calls"] = int(token_usage.get("calls", 0)) + 1
+    state["_token_usage"] = token_usage
+
+    if con:
+        con.llm_usage(phase, prompt, completion, total)
+
+
 # ------------------------------------------------------------------
 # Graph nodes
 # ------------------------------------------------------------------
@@ -223,6 +249,12 @@ async def plan_node(
     )
 
     response = await llm.invoke(request)
+    _record_llm_usage(
+        state,
+        phase="plan",
+        usage=response.usage,
+        con=con,
+    )
 
     if response.structured_output is None:
         con.plan_failed("LLM returned no structured output")
@@ -321,6 +353,12 @@ async def execute_node(
     )
 
     response = await llm.invoke(request)
+    _record_llm_usage(
+        state,
+        phase="execute",
+        usage=response.usage,
+        con=con,
+    )
 
     if response.structured_output is None:
         con.step_failed("LLM returned no structured output")
@@ -444,6 +482,12 @@ async def check_node(
     )
 
     response = await llm.invoke(request)
+    _record_llm_usage(
+        state,
+        phase="check",
+        usage=response.usage,
+        con=con,
+    )
 
     if response.structured_output is None:
         state["_check_decision"] = "replan"
@@ -524,6 +568,12 @@ async def replan_node(
     )
 
     response = await llm.invoke(request)
+    _record_llm_usage(
+        state,
+        phase="replan",
+        usage=response.usage,
+        con=con,
+    )
 
     if response.structured_output is None:
         state["status"] = "failed"
@@ -609,6 +659,12 @@ async def finish_node(
     )
 
     response = await llm.invoke(request)
+    _record_llm_usage(
+        state,
+        phase="finish",
+        usage=response.usage,
+        con=con,
+    )
 
     if response.structured_output:
         con._debug_json("FINISH", response.structured_output)
@@ -622,6 +678,7 @@ async def finish_node(
         )
 
     state["status"] = "completed"
+    state["artifacts"]["_token_usage"] = state.get("_token_usage", {})
     logger.info("agent_finished", run_id=agent_state.run_id)
     return state
 

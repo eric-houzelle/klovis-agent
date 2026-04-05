@@ -158,6 +158,26 @@ class DiscordPerceptionSource(PerceptionSource):
             if not self._should_process(message):
                 return
 
+            recent_messages: list[dict[str, Any]] = []
+            try:
+                async for msg in message.channel.history(limit=10, oldest_first=False):
+                    if msg.id == message.id:
+                        continue
+                    text = (msg.content or "").strip()
+                    if not text:
+                        continue
+                    recent_messages.append({
+                        "message_id": msg.id,
+                        "author_id": msg.author.id,
+                        "author_name": str(msg.author),
+                        "is_bot": bool(getattr(msg.author, "bot", False)),
+                        "content": text[:500],
+                    })
+            except Exception as exc:
+                logger.warning("discord_history_fetch_failed", error=str(exc))
+
+            recent_messages.reverse()
+
             self._pending.append(Event(
                 source="discord",
                 kind=EventKind.REQUEST,
@@ -169,6 +189,7 @@ class DiscordPerceptionSource(PerceptionSource):
                     "author_id": message.author.id,
                     "author_name": str(message.author),
                     "guild_id": message.guild.id if message.guild else None,
+                    "recent_messages": recent_messages,
                 },
             ))
             logger.info(

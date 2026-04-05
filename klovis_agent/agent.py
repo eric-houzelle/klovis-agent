@@ -7,7 +7,6 @@ Tools, perceptions, and memory backends are injected rather than hardcoded.
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +21,7 @@ from klovis_agent.llm.embeddings import EmbeddingClient
 from klovis_agent.llm.router import LLMRouter
 from klovis_agent.models.state import AgentState
 from klovis_agent.models.task import Task
+from klovis_agent.paths import skills_home
 from klovis_agent.recall import recall_for_task
 from klovis_agent.result import AgentResult
 from klovis_agent.sandbox.service import (
@@ -50,6 +50,7 @@ from klovis_agent.tools.builtin.semantic_memory import (
 )
 from klovis_agent.tools.builtin.shell import ShellCommandTool
 from klovis_agent.tools.builtin.skills import (
+    InstallSkillTool,
     ListSkillsTool,
     ReadSkillTool,
     SkillStore,
@@ -130,6 +131,7 @@ class Agent:
         verbose: bool = False,
         data_dir: str | Path | None = None,
         cache_dir: str | Path | None = None,
+        skills_dirs: list[str | Path] | None = None,
         ephemeral: bool = False,
     ) -> None:
         self._verbose = verbose
@@ -169,8 +171,10 @@ class Agent:
 
         self._perceptions = perceptions or []
         self._soul = self._load_soul(soul)
+        self._skills_dirs = [Path(p) for p in (skills_dirs or [])]
 
         self._semantic_store: SemanticMemoryStore | None = None
+        self._skill_store: SkillStore | None = None
         self._github_auth = None
         self._tool_registry = self._build_registry(tools)
         self._max_iterations = max_iterations
@@ -219,8 +223,13 @@ class Agent:
         registry.register(FsMoveTool())
         registry.register(FsCopyTool())
 
-        skills_dir = Path(__file__).resolve().parent.parent / ".skills"
-        self._skill_store = SkillStore(skills_dir)
+        workspace_skills = Path.cwd() / ".skills"
+        user_skills = skills_home()
+        if self._skills_dirs:
+            skill_dirs = self._skills_dirs
+        else:
+            skill_dirs = [workspace_skills, user_skills]
+        self._skill_store = SkillStore(skill_dirs)
         registry.register(HttpRequestTool(skill_store=self._skill_store))
 
         registry.register(WebSearchTool())
@@ -231,6 +240,7 @@ class Agent:
 
         registry.register(ListSkillsTool(self._skill_store))
         registry.register(ReadSkillTool(self._skill_store))
+        registry.register(InstallSkillTool(self._skill_store))
 
         bootstrap_moltbook(
             registry, self._llm, workspace=self._workspace,
@@ -280,7 +290,7 @@ class Agent:
                 })
                 self._console.recall(recalled)
 
-        if self._skill_store:
+        if self._skill_store is not None:
             skill_names = [s.name for s in self._skill_store.list_skills()]
             if skill_names:
                 task = task.model_copy(update={
@@ -300,6 +310,12 @@ class Agent:
         state_dict = initial_state.model_dump()
         state_dict["_console"] = self._console
         state_dict["soul"] = self._soul
+        state_dict["_token_usage"] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "calls": 0,
+        }
 
         logger.info("agent_run_start", run_id=run_id, goal=task.goal)
 
@@ -307,6 +323,12 @@ class Agent:
             final_state_dict = await self._compiled_graph.ainvoke(state_dict)
         finally:
             await self._sandbox.cleanup()
+
+        if "_token_usage" in final_state_dict:
+            artifacts = final_state_dict.get("artifacts", {})
+            if isinstance(artifacts, dict):
+                artifacts["_token_usage"] = final_state_dict["_token_usage"]
+                final_state_dict["artifacts"] = artifacts
 
         final_state_dict.pop("_console", None)
         final_state = AgentState(**final_state_dict)

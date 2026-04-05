@@ -1,0 +1,17 @@
+services:
+  klovis-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: klovis-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AGENT_DATA_DIR: /data
+    volumes:
+      - klovis-data:/data
+      - ./inbox:/inbox
+
+volumes:
+  klovis-data:

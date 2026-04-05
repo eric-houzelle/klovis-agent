@@ -105,6 +105,9 @@ DECISION_USER_TEMPLATE = """\
 ## Relevant Memories (including past actions — do NOT repeat them)
 {recalled_memories}
 
+## Persistent Directives (global mission/state/preferences)
+{persistent_directives}
+
 Based on these events and your past actions, should you act now?
 If a memory shows you already handled an event, skip it.
 If yes, what specific NEW goal?
@@ -119,6 +122,8 @@ async def decide(
     recalled_memories: str,
     llm: LLMRouter,
     soul: str = "",
+    persistent_directives: str = "",
+    usage_out: dict[str, int] | None = None,
 ) -> DecisionOutput:
     """Evaluate perceived events and decide whether to act."""
 
@@ -143,6 +148,7 @@ async def decide(
         user_prompt=DECISION_USER_TEMPLATE.format(
             events_text=perception.as_text(),
             recalled_memories=recalled_memories or "(no prior memories)",
+            persistent_directives=persistent_directives or "(none)",
         ),
         structured_output_schema=DECISION_SCHEMA,
         temperature=0.3,
@@ -160,6 +166,10 @@ async def decide(
         )
 
     data = response.structured_output or {}
+    if usage_out is not None:
+        usage_out["prompt_tokens"] = int(response.usage.get("prompt_tokens", 0) or 0)
+        usage_out["completion_tokens"] = int(response.usage.get("completion_tokens", 0) or 0)
+        usage_out["total_tokens"] = int(response.usage.get("total_tokens", 0) or 0)
 
     try:
         decision = DecisionOutput.model_validate(data)

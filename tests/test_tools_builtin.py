@@ -17,7 +17,11 @@ from klovis_agent.tools.builtin.code_execution import CodeExecutionTool, TextAna
 from klovis_agent.tools.builtin.file_tools import FileReadTool, FileWriteTool
 from klovis_agent.tools.builtin.memory import MemoryTool
 from klovis_agent.tools.builtin.shell import ShellCommandTool
-from klovis_agent.tools.builtin.skills import SkillStore, _parse_frontmatter
+from klovis_agent.tools.builtin.skills import (
+    SkillStore,
+    _parse_frontmatter,
+    _source_to_candidates,
+)
 from klovis_agent.tools.workspace import AgentWorkspace
 
 
@@ -229,6 +233,24 @@ class TestSkillStore:
         store = SkillStore(tmp_path)
         assert store.get_auth_for_url("https://random.com") is None
 
+    def test_priority_order_first_dir_wins(self, tmp_path: Path):
+        high = tmp_path / "high"
+        low = tmp_path / "low"
+        (high / "shared").mkdir(parents=True)
+        (low / "shared").mkdir(parents=True)
+        (high / "shared" / "SKILL.md").write_text(
+            "---\nname: shared\ndescription: high priority\n---\n# High\n"
+        )
+        (low / "shared" / "SKILL.md").write_text(
+            "---\nname: shared\ndescription: low priority\n---\n# Low\n"
+        )
+
+        store = SkillStore([high, low])
+        meta = store.get_meta("shared")
+        assert meta is not None
+        assert meta.description == "high priority"
+        assert "# High" in (store.get_content("shared") or "")
+
 
 class TestParseFrontmatter:
     def test_basic(self):
@@ -244,3 +266,20 @@ class TestParseFrontmatter:
         text = '---\nname: "quoted"\n---\nBody'
         fm = _parse_frontmatter(text)
         assert fm["name"] == "quoted"
+
+
+class TestSkillSourceParsing:
+    def test_skills_sh_owner_skills_pattern(self):
+        c = _source_to_candidates("https://skills.sh/vercel-labs/skills/find-skills")
+        assert c
+        assert c[0].endswith("/vercel-labs/skills/main/skills/find-skills/SKILL.md")
+
+    def test_github_path_pattern(self):
+        c = _source_to_candidates("owner/repo/skills/my-skill")
+        assert c
+        assert c[0].endswith("/owner/repo/main/skills/my-skill/SKILL.md")
+
+    def test_direct_skill_md_url(self):
+        url = "https://raw.githubusercontent.com/a/b/main/skills/x/SKILL.md"
+        c = _source_to_candidates(url)
+        assert c == [url]

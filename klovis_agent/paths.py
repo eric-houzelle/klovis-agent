@@ -38,6 +38,11 @@ def config_home() -> Path:
     return _xdg("XDG_CONFIG_HOME", Path.home() / ".config") / _APP_NAME
 
 
+def skills_home() -> Path:
+    """``$XDG_DATA_HOME/klovis/skills`` (default ``~/.local/share/klovis/skills``)."""
+    return data_home() / "skills"
+
+
 def resolve_data_dir(
     user_value: str | Path | None = None,
     *,

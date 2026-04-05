@@ -130,6 +130,28 @@ class Console:
             if self.verbose:
                 self._print(f"   {DIM}Reasoning: {reasoning}{RESET}")
 
+    def llm_usage(
+        self,
+        phase: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+    ) -> None:
+        self._print(
+            f"   {DIM}Tokens [{phase}] in={prompt_tokens} out={completion_tokens} total={total_tokens}{RESET}"
+        )
+
+    def cycle_usage(
+        self,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        calls: int,
+    ) -> None:
+        self._ts_print(
+            f"{DIM}Cycle tokens: in={prompt_tokens} out={completion_tokens} total={total_tokens} ({calls} LLM call(s)){RESET}"
+        )
+
     def cooldown(self, seconds: int) -> None:
         self._ts_print(f"{DIM}Cooldown: waiting {seconds}s before acting...{RESET}")
 

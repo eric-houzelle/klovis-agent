@@ -10,7 +10,12 @@ from klovis_agent.tools.builtin.file_tools import FileReadTool, FileWriteTool
 from klovis_agent.tools.builtin.memory import MemoryTool
 from klovis_agent.tools.builtin.semantic_memory import SemanticMemoryTool
 from klovis_agent.tools.builtin.shell import ShellCommandTool
-from klovis_agent.tools.builtin.skills import ListSkillsTool, ReadSkillTool, SkillStore
+from klovis_agent.tools.builtin.skills import (
+    InstallSkillTool,
+    ListSkillsTool,
+    ReadSkillTool,
+    SkillStore,
+)
 from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
 
 if TYPE_CHECKING:
@@ -37,6 +42,7 @@ def default_tools(
         SemanticMemoryTool(embedder),
         *(
             [ListSkillsTool(skill_store), ReadSkillTool(skill_store)]
+            + [InstallSkillTool(skill_store)]
             if skill_store
             else []
         ),

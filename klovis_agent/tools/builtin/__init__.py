@@ -25,7 +25,12 @@ from klovis_agent.tools.builtin.semantic_memory import (
     SemanticMemoryTool,
 )
 from klovis_agent.tools.builtin.shell import ShellCommandTool
-from klovis_agent.tools.builtin.skills import ListSkillsTool, ReadSkillTool, SkillStore
+from klovis_agent.tools.builtin.skills import (
+    InstallSkillTool,
+    ListSkillsTool,
+    ReadSkillTool,
+    SkillStore,
+)
 from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
 
 __all__ = [
@@ -43,6 +48,7 @@ __all__ = [
     "FsWriteTool",
     "GitHubPerceptionSource",
     "HttpRequestTool",
+    "InstallSkillTool",
     "ListSkillsTool",
     "MemoryTool",
     "MemoryZone",

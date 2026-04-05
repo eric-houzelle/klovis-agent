@@ -1,7 +1,7 @@
 <h3 align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/LangGraph-powered-orange" alt="LangGraph">
-  <img src="https://img.shields.io/badge/license-proprietary-lightgrey" alt="License">
+  <img src="https://img.shields.io/badge/license-Apache%202.0-lightgrey" alt="License Apache 2.0">
 </h3>
 
 <h3 align="center">
@@ -263,7 +263,7 @@ The schema is backward-compatible. Older SQLite databases without a `zone` colum
 | **Web** | `web_search`, `http_request` |
 | **Code** | `code_execution`, `text_analysis` |
 | **GitHub** | `github_get_repo`, `github_read_file`, `github_list_files`, `github_create_branch`, `github_commit_files`, `github_create_pr`, `github_list_issues`, `github_list_prs`, `github_get_pr`, `github_search_code`, `github_clone_repo`, `github_create_issue`, `github_comment_issue`, `github_get_check_runs` |
-| **Skills** | `list_skills`, `read_skill` |
+| **Skills** | `list_skills`, `read_skill`, `install_skill` |
 
 Destructive tools (`fs_delete`, `fs_write`, `shell_command`...) require interactive confirmation. The flag is configurable per tool:
 
@@ -484,6 +484,46 @@ uvicorn klovis_agent.api:app --reload
 | `GET` | `/health` | Health check |
 </details>
 
+## Docker
+
+The repository includes a ready-to-use `Dockerfile` and `docker-compose.yml`
+for server deployment.
+
+1. Copy env template and set your API key:
+
+```bash
+cp .env.example .env
+# edit .env and set AGENT_LLM__API_KEY
+```
+
+2. Build and start the daemon:
+
+```bash
+docker compose up -d --build
+```
+
+The container runs:
+
+```bash
+uv run python run.py --daemon --interval 0.5
+```
+
+3. Follow logs:
+
+```bash
+docker compose logs -f klovis-agent
+```
+
+4. Stop the stack:
+
+```bash
+docker compose down
+```
+
+Notes:
+- Persistent agent data is stored in the named volume `klovis-data`
+- `./inbox` is mounted at `/inbox` inside the container
+
 ---
 
 ## Architecture
@@ -531,7 +571,7 @@ klovis_agent/
 │       ├── moltbook.py      # Moltbook tools + perception
 │       ├── github.py        # GitHub tools + perception (optional)
 │       ├── discord_bot.py   # Discord bot perception (optional)
-│       └── skills.py        # list_skills, read_skill
+│       └── skills.py        # list_skills, read_skill, install_skill
 │
 ├── perception/              # Perception sources
 │   ├── base.py              # PerceptionSource ABC, Event, EventKind, perceive()

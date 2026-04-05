@@ -35,6 +35,7 @@ from klovis_agent.tools.builtin.semantic_memory import SemanticMemoryStore
 
 if TYPE_CHECKING:
     from klovis_agent.agent import Agent
+    from klovis_agent.result import AgentResult
 
 logger = structlog.get_logger(__name__)
 
@@ -81,10 +82,62 @@ class AgentDaemon:
             logger.warning("daemon_recall_failed", error=str(exc))
             return ""
 
+    @staticmethod
+    def _empty_usage() -> dict[str, int]:
+        return {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "calls": 0,
+        }
+
+    @staticmethod
+    def _merge_usage(dst: dict[str, int], src: dict[str, int] | None) -> None:
+        if not src:
+            return
+        dst["prompt_tokens"] += int(src.get("prompt_tokens", 0) or 0)
+        dst["completion_tokens"] += int(src.get("completion_tokens", 0) or 0)
+        dst["total_tokens"] += int(src.get("total_tokens", 0) or 0)
+        dst["calls"] += int(src.get("calls", 0) or 0)
+
+    @staticmethod
+    def _usage_from_result(result: "AgentResult") -> dict[str, int]:
+        raw = result.artifacts.get("_token_usage", {})
+        if not isinstance(raw, dict):
+            return AgentDaemon._empty_usage()
+        return {
+            "prompt_tokens": int(raw.get("prompt_tokens", 0) or 0),
+            "completion_tokens": int(raw.get("completion_tokens", 0) or 0),
+            "total_tokens": int(raw.get("total_tokens", 0) or 0),
+            "calls": int(raw.get("calls", 0) or 0),
+        }
+
+    async def _recall_persistent_directives(self) -> str:
+        try:
+            store = SemanticMemoryStore()
+            if store.count(zone="semantic") == 0:
+                return ""
+            items = store.list_recent(
+                limit=8,
+                zone="semantic",
+                memory_types=["mission", "state", "preference", "strategy"],
+            )
+            if not items:
+                return ""
+            lines = []
+            for item in items:
+                mtype = item.get("metadata", {}).get("type", "other")
+                lines.append(f"- ({mtype}) {item.get('content', '')}")
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.warning("daemon_directives_recall_failed", error=str(exc))
+            return ""
+
     async def _run_task(
         self,
         goal: str,
         acted_events: list[Event] | None = None,
+        usage_accumulator: dict[str, int] | None = None,
     ) -> None:
         try:
             result = await self._agent.run(goal)
@@ -94,6 +147,8 @@ class AgentDaemon:
                 len(result.steps),
                 result.summary or "",
             )
+            if usage_accumulator is not None:
+                self._merge_usage(usage_accumulator, self._usage_from_result(result))
         except Exception as exc:
             self._con.step_failed(f"Run crashed: {exc}")
             logger.error("daemon_run_failed", error=str(exc))
@@ -147,7 +202,9 @@ class AgentDaemon:
         return None
 
     async def _handle_requests(
-        self, perception: PerceptionResult,
+        self,
+        perception: PerceptionResult,
+        usage_accumulator: dict[str, int] | None = None,
     ) -> bool:
         requests = [
             e for e in perception.events if e.kind == EventKind.REQUEST
@@ -161,8 +218,10 @@ class AgentDaemon:
         for req in requests:
             goal = req.detail or req.title
             if req.source == "discord":
+                history_context = self._format_discord_recent_context(req.metadata)
                 goal = (
                     f"{goal}\n\n"
+                    f"{history_context}"
                     "Discord reply requirements:\n"
                     "- Provide a clear, final user-facing answer.\n"
                     "- Use the same language as the user's message.\n"
@@ -178,6 +237,8 @@ class AgentDaemon:
                     len(result.steps),
                     result.summary or "",
                 )
+                if usage_accumulator is not None:
+                    self._merge_usage(usage_accumulator, self._usage_from_result(result))
 
                 if discord_src and req.source == "discord":
                     await discord_src.send_reply(
@@ -195,6 +256,26 @@ class AgentDaemon:
                 inbox.archive(req.metadata["file"])
 
         return True
+
+    @staticmethod
+    def _format_discord_recent_context(metadata: dict[str, object]) -> str:
+        raw = metadata.get("recent_messages", [])
+        if not isinstance(raw, list) or not raw:
+            return ""
+
+        lines = ["Recent conversation context (oldest -> newest):"]
+        for item in raw[-8:]:
+            if not isinstance(item, dict):
+                continue
+            author = str(item.get("author_name", "unknown"))
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            lines.append(f"- {author}: {content}")
+
+        if len(lines) == 1:
+            return ""
+        return "\n".join(lines) + "\n\n"
 
     @staticmethod
     def _build_recall_query(events: list[Event]) -> str:
@@ -224,6 +305,7 @@ class AgentDaemon:
     async def _cycle(self) -> None:
         self._cycle_count += 1
         self._con.cycle_start(self._cycle_count)
+        cycle_usage = self._empty_usage()
 
         self._con.perceive_start(len(self._sources))
         perception = await perceive(self._sources)
@@ -233,7 +315,9 @@ class AgentDaemon:
         event_count = len(perception.events)
         self._con.perceive_result(perception.summary(), event_count)
 
-        handled_requests = await self._handle_requests(perception)
+        handled_requests = await self._handle_requests(
+            perception, usage_accumulator=cycle_usage,
+        )
 
         other_events = [
             e for e in perception.events if e.kind != EventKind.REQUEST
@@ -247,12 +331,25 @@ class AgentDaemon:
 
             recall_query = self._build_recall_query(other_events)
             recalled = await self._recall_context(recall_query)
+            directives = await self._recall_persistent_directives()
 
             self._con.deciding()
+            decision_usage = self._empty_usage()
             decision = await decide(
                 other_perception, recalled, self._agent.llm_router,
                 soul=self._agent.soul,
+                persistent_directives=directives,
+                usage_out=decision_usage,
             )
+            if decision_usage["total_tokens"] > 0:
+                self._con.llm_usage(
+                    "decision",
+                    decision_usage["prompt_tokens"],
+                    decision_usage["completion_tokens"],
+                    decision_usage["total_tokens"],
+                )
+                decision_usage["calls"] = 1
+                self._merge_usage(cycle_usage, decision_usage)
             self._con.decision(
                 decision.should_act,
                 decision.goal,
@@ -267,9 +364,21 @@ class AgentDaemon:
                 if cooldown_remaining > 0:
                     self._con.cooldown(int(cooldown_remaining))
                     await asyncio.sleep(cooldown_remaining)
-                await self._run_task(decision.goal, acted_events=other_events)
+                await self._run_task(
+                    decision.goal,
+                    acted_events=other_events,
+                    usage_accumulator=cycle_usage,
+                )
         elif not handled_requests:
             self._con._ts_print("Nothing to do. Staying silent.")
+
+        if cycle_usage["calls"] > 0:
+            self._con.cycle_usage(
+                cycle_usage["prompt_tokens"],
+                cycle_usage["completion_tokens"],
+                cycle_usage["total_tokens"],
+                cycle_usage["calls"],
+            )
 
     async def _start_sources(self) -> None:
         """Initialize perception sources that require async startup."""

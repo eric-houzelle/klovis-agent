@@ -101,6 +101,42 @@ class TestSemanticMemoryStore:
         store.add("tagged", [1.0, 0.0], metadata={"tags": ["test"]})
         results = store.search([1.0, 0.0], k=1, min_similarity=0.5)
         assert results[0]["metadata"]["tags"] == ["test"]
+        assert results[0]["metadata"]["type"] == "fact"
+
+    def test_defaults_memory_type_by_zone(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("semantic fact", [1.0, 0.0], zone="semantic")
+        store.add("did action", [1.0, 0.0], zone="episodic")
+        sem = store.list_recent(limit=10, zone="semantic")[0]
+        epi = store.list_recent(limit=10, zone="episodic")[0]
+        assert sem["metadata"]["type"] == "fact"
+        assert epi["metadata"]["type"] == "action"
+
+    def test_recall_filter_by_memory_type(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("Global mission: improve karma", [1.0, 0.0], metadata={"type": "mission"})
+        store.add("Preference: answer in French", [1.0, 0.0], metadata={"type": "preference"})
+        store.add("Random fact", [1.0, 0.0], metadata={"type": "fact"})
+
+        results = store.search(
+            [1.0, 0.0],
+            k=10,
+            min_similarity=0.1,
+            zone="semantic",
+            memory_types=["mission", "preference"],
+        )
+        types = {r["metadata"]["type"] for r in results}
+        assert types == {"mission", "preference"}
+
+    def test_count_by_type(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("m", [1.0, 0.0], metadata={"type": "mission"})
+        store.add("p", [1.0, 0.0], metadata={"type": "preference"})
+        store.add("a", [1.0, 0.0], zone="episodic")
+        counts = store.count_by_type()
+        assert counts["mission"] == 1
+        assert counts["preference"] == 1
+        assert counts["action"] == 1
 
     def test_delete(self, tmp_path: Path):
         store = SemanticMemoryStore(db_dir=tmp_path)

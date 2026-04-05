@@ -43,8 +43,19 @@ CONSOLIDATION_SCHEMA = {
                             "'semantic' for permanent facts/lessons/identity"
                         ),
                     },
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "mission", "state", "preference", "fact", "lesson",
+                            "strategy", "action", "identity", "other",
+                        ],
+                        "description": (
+                            "Structured memory category. "
+                            "Use 'action' for concrete actions performed."
+                        ),
+                    },
                 },
-                "required": ["content", "tags", "zone"],
+                "required": ["content", "tags", "zone", "type"],
             },
         },
     },
@@ -80,7 +91,7 @@ Categories of things worth remembering:
 - **Actions taken** → zone: "episodic" (CRITICAL — always include at least one):
   Record WHAT you did, WHERE (post ID, username, platform), and WHEN.
   This prevents you from repeating the same action in future cycles.
-  Tag these with "action_taken".
+  Tag these with "action_taken". type should be "action".
 - **Facts you discovered** → zone: "semantic": names, IDs, platform features, API behaviors
 - **Lessons from errors** → zone: "semantic": what went wrong and how you fixed it
 - **Preferences** → zone: "semantic": how the user likes things done, what works well
@@ -97,7 +108,7 @@ IMPORTANT: You MUST include at least one "episodic" / "action_taken" memory
 that records the concrete action(s) performed during this run.
 
 Respond with ONLY a JSON object in this exact format (no extra text):
-{{"memories": [{{"content": "...", "tags": ["tag1", "tag2"], "zone": "episodic|semantic"}}]}}
+{{"memories": [{{"content": "...", "tags": ["tag1", "tag2"], "zone": "episodic|semantic", "type": "fact"}}]}}
 """
 
 
@@ -183,14 +194,23 @@ async def consolidate_run(
             continue
         tags = mem.get("tags", [])
         zone = mem.get("zone", "semantic")
+        memory_type = mem.get("type", "")
         if zone not in ("episodic", "semantic"):
             zone = "episodic" if "action_taken" in tags else "semantic"
+        if not memory_type:
+            memory_type = "action" if zone == "episodic" else "fact"
         try:
             embedding = await embedder.embed_one(content)
-            meta = {"tags": tags, "run_id": state.run_id}
+            meta = {"tags": tags, "run_id": state.run_id, "type": memory_type}
             store.add(content=content, embedding=embedding, metadata=meta, zone=zone)
             stored += 1
-            logger.info("memory_consolidated", content=content[:80], tags=tags, zone=zone)
+            logger.info(
+                "memory_consolidated",
+                content=content[:80],
+                tags=tags,
+                zone=zone,
+                memory_type=memory_type,
+            )
         except Exception as exc:
             logger.warning("consolidation_embed_failed", error=str(exc))
 

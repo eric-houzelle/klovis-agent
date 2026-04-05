@@ -22,6 +22,7 @@ logger = structlog.get_logger(__name__)
 
 MAX_RECALLED_EPISODIC = 4
 MAX_RECALLED_SEMANTIC = 4
+MAX_RECALLED_DIRECTIVES = 4
 MIN_SIMILARITY = 0.30
 
 
@@ -50,8 +51,13 @@ async def recall_for_task(
         k_semantic=k_semantic,
         min_similarity=MIN_SIMILARITY,
     )
+    directives = store.list_recent(
+        limit=MAX_RECALLED_DIRECTIVES,
+        zone="semantic",
+        memory_types=["mission", "state", "preference", "strategy"],
+    )
 
-    if not results:
+    if not results and not directives:
         logger.info("recall_no_matches", goal=goal[:80])
         return ""
 
@@ -79,10 +85,17 @@ async def recall_for_task(
                 f"  - {r['content']}{tag_str} (relevance: {r['similarity']})"
             )
 
+    if directives:
+        lines.append("Persistent directives (mission/state/preferences):")
+        for r in directives:
+            mtype = r.get("metadata", {}).get("type", "other")
+            lines.append(f"  - ({mtype}) {r['content']}")
+
     logger.info(
         "recall_complete",
         goal=goal[:80],
         episodic_found=len(episodic),
         semantic_found=len(semantic),
+        directives_found=len(directives),
     )
     return "\n".join(lines)

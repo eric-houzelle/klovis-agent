@@ -19,9 +19,31 @@ logger = structlog.get_logger(__name__)
 _DEFAULT_DB_DIR = Path.home() / ".config" / "agent" / "memory"
 
 MemoryZone = Literal["semantic", "episodic"]
+MemoryType = Literal[
+    "mission",
+    "state",
+    "preference",
+    "fact",
+    "lesson",
+    "strategy",
+    "action",
+    "identity",
+    "other",
+]
 
 EPISODIC_TTL_DAYS = 14
 DEDUP_SIMILARITY_THRESHOLD = 0.9
+_VALID_MEMORY_TYPES = {
+    "mission",
+    "state",
+    "preference",
+    "fact",
+    "lesson",
+    "strategy",
+    "action",
+    "identity",
+    "other",
+}
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -37,6 +59,43 @@ def _recency_weight(created_at: float, now: float) -> float:
     """Score between 0 and 1 that decays over hours."""
     hours = max(0.0, (now - created_at) / 3600.0)
     return 1.0 / (1.0 + hours / 24.0)
+
+
+def _normalize_metadata(
+    metadata: dict[str, Any] | None,
+    zone: MemoryZone,
+) -> dict[str, Any]:
+    meta = dict(metadata or {})
+    tags = meta.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
+    tags = [str(t) for t in tags]
+    meta["tags"] = tags
+
+    mtype = str(meta.get("type", "")).strip().lower()
+    if not mtype:
+        mtype = "action" if (zone == "episodic" or "action_taken" in tags) else "fact"
+    if mtype not in _VALID_MEMORY_TYPES:
+        mtype = "other"
+    meta["type"] = mtype
+    return meta
+
+
+def _matches_type_filter(
+    metadata: dict[str, Any],
+    memory_type: MemoryType | None,
+    memory_types: list[str] | None,
+) -> bool:
+    if not memory_type and not memory_types:
+        return True
+    mtype = str(metadata.get("type", "")).strip().lower()
+    if memory_type and mtype != memory_type:
+        return False
+    if memory_types:
+        allowed = {str(t).strip().lower() for t in memory_types if str(t).strip()}
+        if allowed and mtype not in allowed:
+            return False
+    return True
 
 
 class SemanticMemoryStore:
@@ -101,7 +160,7 @@ class SemanticMemoryStore:
         metadata: dict[str, Any] | None = None,
         zone: MemoryZone = "semantic",
     ) -> int:
-        meta = metadata or {}
+        meta = _normalize_metadata(metadata, zone)
         now = time.time()
 
         if zone == "semantic" and self._has_zone:
@@ -187,6 +246,8 @@ class SemanticMemoryStore:
         k: int = 5,
         min_similarity: float = 0.3,
         zone: MemoryZone | None = None,
+        memory_type: MemoryType | None = None,
+        memory_types: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Search memories by similarity.
 
@@ -220,6 +281,9 @@ class SemanticMemoryStore:
             sim = _cosine_similarity(query_embedding, emb)
             if sim < min_similarity:
                 continue
+            metadata = json.loads(meta_json)
+            if not _matches_type_filter(metadata, memory_type, memory_types):
+                continue
 
             if row_zone == "episodic":
                 recency = _recency_weight(created_at, now)
@@ -230,7 +294,7 @@ class SemanticMemoryStore:
             scored.append((score, {
                 "id": row_id,
                 "content": content,
-                "metadata": json.loads(meta_json),
+                "metadata": metadata,
                 "similarity": round(sim, 4),
                 "score": round(score, 4),
                 "zone": row_zone,
@@ -256,6 +320,8 @@ class SemanticMemoryStore:
         k_episodic: int = 3,
         k_semantic: int = 3,
         min_similarity: float = 0.3,
+        memory_type: MemoryType | None = None,
+        memory_types: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Search both zones independently and merge results.
 
@@ -265,10 +331,12 @@ class SemanticMemoryStore:
         episodic = self.search(
             query_embedding, k=k_episodic,
             min_similarity=min_similarity, zone="episodic",
+            memory_type=memory_type, memory_types=memory_types,
         )
         semantic = self.search(
             query_embedding, k=k_semantic,
             min_similarity=min_similarity, zone="semantic",
+            memory_type=memory_type, memory_types=memory_types,
         )
 
         seen_ids = set()
@@ -307,7 +375,30 @@ class SemanticMemoryStore:
             ).fetchone()[0]
         return self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
 
-    def list_recent(self, limit: int = 10, zone: MemoryZone | None = None) -> list[dict[str, Any]]:
+    def count_by_type(self) -> dict[str, int]:
+        if self._has_zone:
+            rows = self._conn.execute("SELECT metadata FROM memories").fetchall()
+        else:
+            rows = self._conn.execute("SELECT metadata FROM memories").fetchall()
+        counts: dict[str, int] = {}
+        for (meta_json,) in rows:
+            try:
+                meta = json.loads(meta_json)
+            except Exception:
+                meta = {}
+            mtype = str(meta.get("type", "other")).strip().lower() or "other"
+            if mtype not in _VALID_MEMORY_TYPES:
+                mtype = "other"
+            counts[mtype] = counts.get(mtype, 0) + 1
+        return counts
+
+    def list_recent(
+        self,
+        limit: int = 10,
+        zone: MemoryZone | None = None,
+        memory_type: MemoryType | None = None,
+        memory_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         if self._has_zone:
             if zone:
                 rows = self._conn.execute(
@@ -328,7 +419,7 @@ class SemanticMemoryStore:
                 (limit,),
             ).fetchall()
             rows = [(*r, "semantic") for r in rows_raw]
-        return [
+        items = [
             {
                 "id": r[0],
                 "content": r[1],
@@ -339,6 +430,11 @@ class SemanticMemoryStore:
             }
             for r in rows
         ]
+        filtered = [
+            item for item in items
+            if _matches_type_filter(item["metadata"], memory_type, memory_types)
+        ]
+        return filtered[:limit]
 
 
 class SemanticMemoryTool(BaseTool):
@@ -403,6 +499,28 @@ class SemanticMemoryTool(BaseTool):
                             "For 'recall': filter to a specific zone, or omit to search both."
                         ),
                     },
+                    "memory_type": {
+                        "type": "string",
+                        "enum": [
+                            "mission", "state", "preference", "fact", "lesson",
+                            "strategy", "action", "identity", "other",
+                        ],
+                        "description": (
+                            "Structured category of the memory. "
+                            "Use for remember and optional recall filtering."
+                        ),
+                    },
+                    "memory_types": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "mission", "state", "preference", "fact", "lesson",
+                                "strategy", "action", "identity", "other",
+                            ],
+                        },
+                        "description": "Optional list of categories to include during recall.",
+                    },
                     "memory_id": {
                         "type": "integer",
                         "description": "The memory ID to delete (only for 'forget')",
@@ -435,6 +553,9 @@ class SemanticMemoryTool(BaseTool):
             zone: MemoryZone = inputs.get("zone", "semantic")  # type: ignore[assignment]
             if zone not in ("semantic", "episodic"):
                 zone = "semantic"
+            memory_type = inputs.get("memory_type")
+            if memory_type and memory_type not in _VALID_MEMORY_TYPES:
+                memory_type = "other"
             try:
                 embedding = await self._embedder.embed_one(content)
             except Exception as exc:
@@ -443,7 +564,7 @@ class SemanticMemoryTool(BaseTool):
             memory_id = self._store.add(
                 content=content,
                 embedding=embedding,
-                metadata={"tags": tags},
+                metadata={"tags": tags, "type": memory_type},
                 zone=zone,
             )
             logger.info("semantic_memory_stored", memory_id=memory_id, tags=tags, zone=zone)
@@ -452,6 +573,7 @@ class SemanticMemoryTool(BaseTool):
                 output={
                     "memory_id": memory_id,
                     "zone": zone,
+                    "memory_type": memory_type,
                     "stored": True,
                     "total_memories": self._store.count(),
                 },
@@ -465,6 +587,12 @@ class SemanticMemoryTool(BaseTool):
             zone_filter: MemoryZone | None = inputs.get("zone")  # type: ignore[assignment]
             if zone_filter and zone_filter not in ("semantic", "episodic"):
                 zone_filter = None
+            memory_type: MemoryType | None = inputs.get("memory_type")  # type: ignore[assignment]
+            if memory_type and memory_type not in _VALID_MEMORY_TYPES:
+                memory_type = None
+            memory_types = inputs.get("memory_types")
+            if not isinstance(memory_types, list):
+                memory_types = None
             try:
                 query_embedding = await self._embedder.embed_one(query)
             except Exception as exc:
@@ -472,13 +600,19 @@ class SemanticMemoryTool(BaseTool):
 
             if zone_filter:
                 results = self._store.search(
-                    query_embedding, k=k, zone=zone_filter,
+                    query_embedding,
+                    k=k,
+                    zone=zone_filter,
+                    memory_type=memory_type,
+                    memory_types=memory_types,
                 )
             else:
                 results = self._store.search_zones(
                     query_embedding,
                     k_episodic=max(1, k // 2),
                     k_semantic=max(1, k - k // 2),
+                    memory_type=memory_type,
+                    memory_types=memory_types,
                 )
             logger.info("semantic_memory_recall", query=query[:80], results=len(results))
             return ToolResult(
@@ -509,6 +643,7 @@ class SemanticMemoryTool(BaseTool):
                     "total_memories": total,
                     "episodic_count": episodic_count,
                     "semantic_count": semantic_count,
+                    "counts_by_type": self._store.count_by_type(),
                     "recent": recent,
                 },
             )
