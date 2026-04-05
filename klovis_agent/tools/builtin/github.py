@@ -21,6 +21,7 @@ import json
 import os
 import time
 from base64 import b64decode
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,16 @@ _MAX_RESPONSE_CHARS = 80_000
 # ---------------------------------------------------------------------------
 # Authentication
 # ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class GitHubAuthConfig:
+    """Explicit GitHub authentication configuration."""
+
+    token: str = ""
+    app_id: str = ""
+    private_key_path: str = ""
+    installation_id: str = ""
+
 
 def _load_github_config() -> dict[str, str]:
     """Load GitHub credentials from environment.
@@ -73,7 +84,27 @@ def _load_github_config() -> dict[str, str]:
     return {}
 
 
-def _generate_jwt(app_id: str, private_key_pem: str) -> str:
+def github_auth_config_from_env() -> GitHubAuthConfig | None:
+    """Build explicit auth config from environment variables.
+
+    Returns ``None`` when no GitHub credentials are configured.
+    """
+    raw = _load_github_config()
+    if not raw:
+        return None
+    return GitHubAuthConfig(
+        token=raw.get("token", ""),
+        app_id=raw.get("app_id", ""),
+        private_key_path=raw.get("private_key_path", ""),
+        installation_id=raw.get("installation_id", ""),
+    )
+
+
+def _generate_jwt(
+    app_id: str,
+    private_key_pem: str,
+    private_key_path: str = "",
+) -> str:
     """Create a short-lived JWT for GitHub App authentication.
 
     Tries, in order: PyJWT, cryptography, then the system ``openssl``
@@ -115,10 +146,14 @@ def _generate_jwt(app_id: str, private_key_pem: str) -> str:
     except ImportError:
         pass
 
-    return _generate_jwt_openssl(app_id, payload_dict)
+    return _generate_jwt_openssl(app_id, payload_dict, private_key_path)
 
 
-def _generate_jwt_openssl(app_id: str, payload_dict: dict) -> str:
+def _generate_jwt_openssl(
+    app_id: str,
+    payload_dict: dict,
+    private_key_path: str = "",
+) -> str:
     """Sign a JWT RS256 using the system ``openssl`` command."""
     import base64
     import subprocess
@@ -132,8 +167,11 @@ def _generate_jwt_openssl(app_id: str, payload_dict: dict) -> str:
     ).rstrip(b"=")
     signing_input = header + b"." + body
 
-    key_path = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
-    resolved_key = str(Path(key_path).expanduser().resolve()) if key_path else ""
+    resolved_key = (
+        str(Path(private_key_path).expanduser().resolve())
+        if private_key_path
+        else ""
+    )
 
     if not resolved_key or not Path(resolved_key).is_file():
         raise RuntimeError(
@@ -179,8 +217,13 @@ class _GitHubAuth:
         if self._token and time.time() < self._token_expires_at - 60:
             return self._token
 
-        private_key = Path(self._config["private_key_path"]).read_text()
-        jwt_token = _generate_jwt(self._config["app_id"], private_key)
+        private_key_path = self._config["private_key_path"]
+        private_key = Path(private_key_path).read_text()
+        jwt_token = _generate_jwt(
+            self._config["app_id"],
+            private_key,
+            private_key_path=private_key_path,
+        )
 
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(
@@ -1623,6 +1666,43 @@ def _register_github_tools(
     logger.info("github_tools_registered", count=len(tools))
 
 
+def create_github_auth(config: GitHubAuthConfig) -> _GitHubAuth | None:
+    """Create an auth object from explicit credentials."""
+    if config.token:
+        return _GitHubAuth({"token": config.token, "auth_mode": "pat"})
+
+    if config.app_id and config.private_key_path and config.installation_id:
+        resolved = Path(config.private_key_path).expanduser().resolve()
+        if not resolved.is_file():
+            logger.warning("github_private_key_not_found", path=config.private_key_path)
+            return None
+        return _GitHubAuth({
+            "app_id": config.app_id,
+            "private_key_path": str(resolved),
+            "installation_id": config.installation_id,
+            "auth_mode": "app",
+        })
+
+    return None
+
+
+def load_github_auth_from_env() -> _GitHubAuth | None:
+    """Create auth from environment variables when available."""
+    config = github_auth_config_from_env()
+    if config is None:
+        return None
+    return create_github_auth(config)
+
+
+def register_github_tools(
+    registry: ToolRegistry,
+    auth: _GitHubAuth,
+    scratch_dir: Path | None = None,
+) -> None:
+    """Register all GitHub tools using an explicit auth object."""
+    _register_github_tools(registry, auth, scratch_dir=scratch_dir)
+
+
 def bootstrap_github(
     registry: ToolRegistry,
     scratch_dir: Path | None = None,
@@ -1631,12 +1711,11 @@ def bootstrap_github(
 
     Returns the auth instance (needed for perception source) or None.
     """
-    config = _load_github_config()
-    if not config:
+    auth = load_github_auth_from_env()
+    if auth is None:
         logger.debug("github_no_credentials", hint="Set GITHUB_TOKEN or GITHUB_APP_* env vars")
         return None
 
-    auth = _GitHubAuth(config)
     _register_github_tools(registry, auth, scratch_dir=scratch_dir)
-    logger.info("github_bootstrap_ok", auth_mode=config.get("auth_mode", "?"))
+    logger.info("github_bootstrap_ok", auth_mode="env")
     return auth

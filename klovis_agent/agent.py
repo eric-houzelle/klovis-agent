@@ -41,7 +41,7 @@ from klovis_agent.tools.builtin.filesystem import (
     FsReadTool,
     FsWriteTool,
 )
-from klovis_agent.tools.builtin.github import bootstrap_github
+from klovis_agent.tools.builtin.github import register_github_tools
 from klovis_agent.tools.builtin.memory import MemoryTool
 from klovis_agent.tools.builtin.moltbook import bootstrap_moltbook
 from klovis_agent.tools.builtin.semantic_memory import (
@@ -132,6 +132,7 @@ class Agent:
         data_dir: str | Path | None = None,
         cache_dir: str | Path | None = None,
         skills_dirs: list[str | Path] | None = None,
+        github_auth: Any | None = None,
         ephemeral: bool = False,
     ) -> None:
         self._verbose = verbose
@@ -175,7 +176,7 @@ class Agent:
 
         self._semantic_store: SemanticMemoryStore | None = None
         self._skill_store: SkillStore | None = None
-        self._github_auth = None
+        self._github_auth = github_auth
         self._tool_registry = self._build_registry(tools)
         self._max_iterations = max_iterations
 
@@ -246,9 +247,12 @@ class Agent:
             registry, self._llm, workspace=self._workspace,
         )
 
-        self._github_auth = bootstrap_github(
-            registry, scratch_dir=self._workspace.scratch.root,
-        )
+        if self._github_auth is not None:
+            register_github_tools(
+                registry,
+                self._github_auth,
+                scratch_dir=self._workspace.scratch.root,
+            )
 
         return registry
 

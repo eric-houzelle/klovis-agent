@@ -80,6 +80,7 @@ async def _run_single(
     verbose: bool,
     data_dir: str = "",
     soul: str = "",
+    github_auth: object | None = None,
     ephemeral: bool = False,
 ) -> None:
     agent = Agent(
@@ -90,6 +91,7 @@ async def _run_single(
         verbose=verbose,
         data_dir=data_dir or config.data_dir or None,
         soul=Path(soul) if soul else None,
+        github_auth=github_auth,
         ephemeral=ephemeral,
     )
 
@@ -113,7 +115,7 @@ async def _run_single(
     )
 
 
-def _build_perception_sources() -> list:
+def _build_perception_sources(github_auth: object | None = None) -> list:
     sources = [InboxPerceptionSource()]
 
     try:
@@ -145,29 +147,32 @@ def _build_perception_sources() -> list:
     except Exception:
         pass
 
-    try:
-        from klovis_agent.tools.builtin.github import (
-            GitHubPerceptionSource,
-            _GitHubAuth,
-            _load_github_config,
-        )
+    if github_auth is not None:
+        try:
+            from klovis_agent.tools.builtin.github import GitHubPerceptionSource
 
-        gh_config = _load_github_config()
-        if gh_config:
-            auth = _GitHubAuth(gh_config)
             for repo_spec in _GITHUB_REPOS:
                 sources.append(
                     GitHubPerceptionSource(
                         owner=repo_spec["owner"],
                         repo=repo_spec["repo"],
-                        auth=auth,
+                        auth=github_auth,
                         issue_labels=repo_spec.get("issue_labels", []),
                     )
                 )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return sources
+
+
+def _load_optional_github_auth() -> object | None:
+    try:
+        from klovis_agent.tools.builtin.github import load_github_auth_from_env
+
+        return load_github_auth_from_env()
+    except Exception:
+        return None
 
 
 async def _run_daemon(
@@ -178,7 +183,8 @@ async def _run_daemon(
     data_dir: str = "",
     soul: str = "",
 ) -> None:
-    sources = _build_perception_sources()
+    github_auth = _load_optional_github_auth()
+    sources = _build_perception_sources(github_auth=github_auth)
 
     agent = Agent(
         llm=config.llm,
@@ -189,6 +195,7 @@ async def _run_daemon(
         data_dir=data_dir or config.data_dir or None,
         soul=Path(soul) if soul else None,
         perceptions=sources,
+        github_auth=github_auth,
     )
 
     agent.console.banner(config.llm.default_model, config.llm.base_url)
@@ -225,6 +232,7 @@ async def async_main() -> None:
             soul=opts["soul"],
         )
     else:
+        github_auth = _load_optional_github_auth()
         goal = (
             " ".join(opts["goal_parts"])
             if opts["goal_parts"]
@@ -234,6 +242,7 @@ async def async_main() -> None:
             config, goal, verbose,
             data_dir=opts["data_dir"],
             soul=opts["soul"],
+            github_auth=github_auth,
             ephemeral=opts["ephemeral"],
         )
 

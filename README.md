@@ -37,6 +37,24 @@ In daemon mode, they observe their environment, decide whether to act, and conso
 
 ---
 
+## Installation
+
+```bash
+pip install klovis-agent
+```
+
+Optional integrations:
+
+```bash
+pip install "klovis-agent[github]"    # GitHub App/PAT auth helpers
+pip install "klovis-agent[discord]"   # Discord perception source
+pip install "klovis-agent[api]"       # FastAPI + uvicorn REST server
+pip install "klovis-agent[sandbox]"   # OpenSandbox backend
+pip install "klovis-agent[full]"      # All optional integrations
+```
+
+---
+
 ## Quick demo
 
 ```python
@@ -404,6 +422,24 @@ Or via a `.env` file at the project root (automatically loaded by `run.py`).
 
 The agent can read code, create branches, commit files, and open pull requests on GitHub. Authentication supports either a **GitHub App** (recommended) or a **Personal Access Token**.
 
+For library usage, prefer explicit configuration in Python:
+
+```python
+from klovis_agent import Agent, LLMConfig
+from klovis_agent.tools.builtin import GitHubAuthConfig, create_github_auth
+
+github_auth = create_github_auth(
+    GitHubAuthConfig(token="github_pat_...")
+)
+
+agent = Agent(
+    llm=LLMConfig(api_key="sk-..."),
+    github_auth=github_auth,
+)
+```
+
+Environment variables below are mainly for CLI/app convenience.
+
 **GitHub App:**
 
 ```bash
@@ -440,6 +476,18 @@ pip install "klovis-agent[github]"
 <summary><b>Discord integration (optional)</b></summary>
 
 Chat with your agent in real time through Discord DMs or @mentions — just like messaging a person on WhatsApp.
+
+For library usage, inject it explicitly as a perception source:
+
+```python
+from klovis_agent import Agent, LLMConfig
+from klovis_agent.tools.builtin import DiscordPerceptionSource
+
+agent = Agent(
+    llm=LLMConfig(api_key="sk-..."),
+    perceptions=[DiscordPerceptionSource(token="...")],
+)
+```
 
 **1. Create a Discord bot:**
 
