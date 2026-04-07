@@ -392,6 +392,73 @@ class SemanticMemoryStore:
             counts[mtype] = counts.get(mtype, 0) + 1
         return counts
 
+    def introspect(self) -> dict[str, Any]:
+        """Return a full breakdown of memory state for visualization."""
+        rows = self._conn.execute(
+            "SELECT content, metadata, created_at, access_count, zone "
+            "FROM memories ORDER BY created_at DESC"
+        ).fetchall()
+
+        total = len(rows)
+        zones: dict[str, int] = {}
+        zone_type_counts: dict[str, dict[str, int]] = {}
+        tag_counts: dict[str, int] = {}
+        previews: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        oldest_ts: float | None = None
+        newest_ts: float | None = None
+
+        for content, meta_json, created_at, access_count, zone in rows:
+            try:
+                meta = json.loads(meta_json)
+            except Exception:
+                meta = {}
+
+            zone = zone or "semantic"
+            mtype = str(meta.get("type", "other")).strip().lower() or "other"
+            if mtype not in _VALID_MEMORY_TYPES:
+                mtype = "other"
+            tags = meta.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+
+            zones[zone] = zones.get(zone, 0) + 1
+
+            if zone not in zone_type_counts:
+                zone_type_counts[zone] = {}
+            zone_type_counts[zone][mtype] = zone_type_counts[zone].get(mtype, 0) + 1
+
+            for tag in tags:
+                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+            if zone not in previews:
+                previews[zone] = {}
+            if mtype not in previews[zone]:
+                previews[zone][mtype] = []
+            if len(previews[zone][mtype]) < 2:
+                snippet = content[:120] + "…" if len(content) > 120 else content
+                previews[zone][mtype].append({
+                    "snippet": snippet,
+                    "tags": tags[:5],
+                    "access_count": access_count,
+                })
+
+            if oldest_ts is None or created_at < oldest_ts:
+                oldest_ts = created_at
+            if newest_ts is None or created_at > newest_ts:
+                newest_ts = created_at
+
+        top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+
+        return {
+            "total_memories": total,
+            "by_zone": zones,
+            "by_zone_and_type": zone_type_counts,
+            "top_tags": [{"tag": t, "count": c} for t, c in top_tags],
+            "previews": previews,
+            "oldest_memory_ts": oldest_ts,
+            "newest_memory_ts": newest_ts,
+        }
+
     def list_recent(
         self,
         limit: int = 10,

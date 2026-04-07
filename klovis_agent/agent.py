@@ -6,6 +6,7 @@ Tools, perceptions, and memory backends are injected rather than hardcoded.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,6 +44,7 @@ from klovis_agent.tools.builtin.filesystem import (
 )
 from klovis_agent.tools.builtin.github import register_github_tools
 from klovis_agent.tools.builtin.memory import MemoryTool
+from klovis_agent.tools.builtin.memory_introspection import MemoryIntrospectionTool
 from klovis_agent.tools.builtin.moltbook import bootstrap_moltbook
 from klovis_agent.tools.builtin.semantic_memory import (
     SemanticMemoryStore,
@@ -53,6 +55,8 @@ from klovis_agent.tools.builtin.skills import (
     InstallSkillTool,
     ListSkillsTool,
     ReadSkillTool,
+    SearchRemoteSkillsTool,
+    SkillIndex,
     SkillStore,
 )
 from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
@@ -176,6 +180,8 @@ class Agent:
 
         self._semantic_store: SemanticMemoryStore | None = None
         self._skill_store: SkillStore | None = None
+        self._skill_index: SkillIndex | None = None
+        self._skills_indexed: bool = False
         self._github_auth = github_auth
         self._tool_registry = self._build_registry(tools)
         self._max_iterations = max_iterations
@@ -238,10 +244,15 @@ class Agent:
         sem_tool = SemanticMemoryTool(self._embedder)
         self._semantic_store = sem_tool.store
         registry.register(sem_tool)
+        registry.register(MemoryIntrospectionTool(sem_tool.store))
+
+        if self._semantic_store:
+            self._skill_index = SkillIndex(self._semantic_store, self._embedder)
 
         registry.register(ListSkillsTool(self._skill_store))
         registry.register(ReadSkillTool(self._skill_store))
-        registry.register(InstallSkillTool(self._skill_store))
+        registry.register(InstallSkillTool(self._skill_store, self._skill_index))
+        registry.register(SearchRemoteSkillsTool(self._skill_store))
 
         bootstrap_moltbook(
             registry, self._llm, workspace=self._workspace,
@@ -255,6 +266,16 @@ class Agent:
             )
 
         return registry
+
+    async def _index_existing_skills(self) -> None:
+        """Index all currently installed skills into semantic memory (once)."""
+        if not self._skill_index or not self._skill_store:
+            return
+        for meta in self._skill_store.list_skills():
+            content = self._skill_store.get_content(meta.name)
+            if content:
+                with contextlib.suppress(Exception):
+                    await self._skill_index.index_skill(meta, content)
 
     async def run(self, goal: str, **kwargs: Any) -> AgentResult:
         """Run the full agentic loop for a goal.
@@ -279,11 +300,16 @@ class Agent:
 
         self._console.run_start(goal, run_id)
 
+        if self._skill_index and not self._skills_indexed:
+            await self._index_existing_skills()
+            self._skills_indexed = True
+
         if self._semantic_store:
             recalled = await recall_for_task(
                 goal=task.goal,
                 embedder=self._embedder,
                 store=self._semantic_store,
+                skill_index=self._skill_index,
             )
             if recalled:
                 task = task.model_copy(update={

@@ -5,24 +5,34 @@ and injects them into the task context. This gives the planner
 awareness of prior experiences, learned lessons, and accumulated knowledge.
 
 Recall queries both memory zones independently:
-  - **episodic** — recent actions/events, ranked by similarity × recency
+  - **episodic** — recent actions/events, ranked by similarity x recency
   - **semantic** — permanent facts/lessons, ranked by pure similarity
 Results are merged so the planner always sees both "what I did recently"
 and "what I know".
+
+When a ``SkillIndex`` is provided, the recall also surfaces skills that
+are semantically relevant to the goal so the planner knows which skills
+to load before acting.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import structlog
 
 from klovis_agent.llm.embeddings import EmbeddingClient
 from klovis_agent.tools.builtin.semantic_memory import SemanticMemoryStore
 
+if TYPE_CHECKING:
+    from klovis_agent.tools.builtin.skills import SkillIndex
+
 logger = structlog.get_logger(__name__)
 
 MAX_RECALLED_EPISODIC = 4
 MAX_RECALLED_SEMANTIC = 4
 MAX_RECALLED_DIRECTIVES = 4
+MAX_RECALLED_SKILLS = 3
 MIN_SIMILARITY = 0.30
 
 
@@ -30,13 +40,14 @@ async def recall_for_task(
     goal: str,
     embedder: EmbeddingClient,
     store: SemanticMemoryStore,
+    skill_index: SkillIndex | None = None,
     k_episodic: int = MAX_RECALLED_EPISODIC,
     k_semantic: int = MAX_RECALLED_SEMANTIC,
 ) -> str:
     """Recall relevant memories for a task goal. Returns formatted context string."""
     store.prune_episodic()
 
-    if store.count() == 0:
+    if store.count() == 0 and skill_index is None:
         return ""
 
     try:
@@ -57,12 +68,21 @@ async def recall_for_task(
         memory_types=["mission", "state", "preference", "strategy"],
     )
 
-    if not results and not directives:
-        logger.info("recall_no_matches", goal=goal[:80])
-        return ""
-
     episodic = [r for r in results if r.get("zone") == "episodic"]
     semantic = [r for r in results if r.get("zone") == "semantic"]
+
+    relevant_skills: list[dict] = []
+    if skill_index:
+        try:
+            relevant_skills = await skill_index.find_relevant(
+                goal, k=MAX_RECALLED_SKILLS,
+            )
+        except Exception as exc:
+            logger.warning("skill_index_recall_failed", error=str(exc))
+
+    if not results and not directives and not relevant_skills:
+        logger.info("recall_no_matches", goal=goal[:80])
+        return ""
 
     lines: list[str] = []
 
@@ -91,11 +111,21 @@ async def recall_for_task(
             mtype = r.get("metadata", {}).get("type", "other")
             lines.append(f"  - ({mtype}) {r['content']}")
 
+    if relevant_skills:
+        lines.append("Relevant installed skills (use read_skill to load before acting):")
+        for r in relevant_skills:
+            skill_name = r.get("metadata", {}).get("skill_name", "?")
+            snippet = r["content"][:150].replace("\n", " ")
+            lines.append(
+                f"  - {skill_name}: {snippet}... (relevance: {r['similarity']})"
+            )
+
     logger.info(
         "recall_complete",
         goal=goal[:80],
         episodic_found=len(episodic),
         semantic_found=len(semantic),
         directives_found=len(directives),
+        skills_found=len(relevant_skills),
     )
     return "\n".join(lines)

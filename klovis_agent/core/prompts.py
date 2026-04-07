@@ -59,6 +59,17 @@ Skills (CRITICAL — always check before starting a complex task):
 - Keep dedicated tools (moltbook_post, moltbook_comment) for operations that
   involve complex logic (verification challenges, multi-part content).
 
+Skill acquisition (when you lack a capability):
+- If the goal requires interacting with an API or service for which you have
+  NO installed skill, you can ACQUIRE one autonomously:
+  1. First check: call "list_skills" to confirm no existing skill covers the need.
+  2. Search: call "search_remote_skills" with a description of what you need.
+  3. Install: call "install_skill" with the source from the search results.
+  4. Use: call "read_skill" on the newly installed skill, then proceed.
+- The recall context may already suggest relevant installed skills — check
+  the "Relevant installed skills" section before searching remotely.
+- Only acquire skills when genuinely needed — do not install speculatively.
+
 Step granularity (CRITICAL — the executor has a limited output budget):
 - Each step that generates code must target ONE file or ONE small logical unit.
   NEVER ask a single step to produce multiple files or a large module at once.
@@ -143,6 +154,8 @@ Skills & http_request:
   headers (e.g. Authorization: Bearer) are injected AUTOMATICALLY. You do NOT
   need to add them yourself. Just provide method, url, and body.
 - Use the exact endpoint URLs from the skill documentation.
+- "search_remote_skills" searches online registries for installable skills.
+  Use it when no installed skill covers the need, then "install_skill" to add it.
 """
 
 EXECUTE_USER_TEMPLATE = """\
@@ -264,6 +277,8 @@ Tool selection (CRITICAL):
 - For external API calls, prefer: read_skill → http_request (with auto-auth)
   over dedicated wrapper tools, unless the wrapper handles complex logic
   (e.g. verification challenges).
+- If a step failed because no skill covers the needed API, add steps to
+  search_remote_skills → install_skill → read_skill before retrying.
 - If a step failed because the user declined a confirmation prompt (fs_write,
   fs_delete, etc.), adapt the plan — do not retry the same action blindly.
 - Prefer file_edit over file_write for modifying existing files.

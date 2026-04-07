@@ -14,12 +14,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from klovis_agent.paths import skills_home
 from klovis_agent.tools.base import BaseTool, ToolResult, ToolSpec
+
+if TYPE_CHECKING:
+    from klovis_agent.llm.embeddings import EmbeddingClient
+    from klovis_agent.tools.builtin.semantic_memory import SemanticMemoryStore
 
 logger = structlog.get_logger(__name__)
 
@@ -282,9 +286,14 @@ class InstallSkillTool(BaseTool):
 
     requires_confirmation = True
 
-    def __init__(self, store: SkillStore) -> None:
+    def __init__(
+        self,
+        store: SkillStore,
+        skill_index: SkillIndex | None = None,
+    ) -> None:
         super().__init__(requires_confirmation=True)
         self._store = store
+        self._skill_index = skill_index
 
     def spec(self) -> ToolSpec:
         return ToolSpec(
@@ -401,6 +410,12 @@ class InstallSkillTool(BaseTool):
         self._store.reload()
         meta = self._store.get_meta(meta_name) if meta_name else None
 
+        if self._skill_index and meta:
+            try:
+                await self._skill_index.index_skill(meta, content)
+            except Exception as exc:
+                logger.warning("skill_index_failed", skill=meta.name, error=str(exc))
+
         return ToolResult(
             success=True,
             output={
@@ -413,6 +428,226 @@ class InstallSkillTool(BaseTool):
             },
         )
 
+
+# ---------------------------------------------------------------------------
+# Semantic skill index
+# ---------------------------------------------------------------------------
+
+_SKILL_MEMORY_TYPE = "skill"
+_SKILL_INDEX_TAG = "skill_index"
+_SKILL_SUMMARY_MAX_CHARS = 500
+
+
+class SkillIndex:
+    """Semantic index over installed skills for relevance-based retrieval.
+
+    Stores a vectorised summary of each skill in ``SemanticMemoryStore`` so
+    the agent can find relevant skills by *need* rather than by exact name.
+    """
+
+    def __init__(
+        self,
+        store: SemanticMemoryStore,
+        embedder: EmbeddingClient,
+    ) -> None:
+        self._store = store
+        self._embedder = embedder
+
+    async def index_skill(self, meta: SkillMeta, content: str) -> None:
+        """Vectorise and store a skill summary for later retrieval."""
+        summary = self._build_summary(meta, content)
+        embedding = await self._embedder.embed_one(summary)
+        self._store.add(
+            content=summary,
+            embedding=embedding,
+            metadata={
+                "type": _SKILL_MEMORY_TYPE,
+                "tags": [_SKILL_INDEX_TAG, meta.name],
+                "skill_name": meta.name,
+                "api_base": meta.api_base,
+            },
+            zone="semantic",
+        )
+        logger.info("skill_indexed", name=meta.name)
+
+    async def find_relevant(
+        self,
+        query: str,
+        k: int = 3,
+        min_similarity: float = 0.35,
+    ) -> list[dict[str, Any]]:
+        """Find skills relevant to a natural-language query."""
+        embedding = await self._embedder.embed_one(query)
+        return self._store.search(
+            embedding,
+            k=k,
+            min_similarity=min_similarity,
+            zone="semantic",
+            memory_type="skill",
+        )
+
+    @staticmethod
+    def _build_summary(meta: SkillMeta, content: str) -> str:
+        lines = [f"Skill: {meta.name}"]
+        if meta.description:
+            lines.append(f"Description: {meta.description}")
+        if meta.api_base:
+            lines.append(f"API: {meta.api_base}")
+        body_parts = content.split("---", 2)
+        body = body_parts[-1].strip() if len(body_parts) > 1 else content.strip()
+        lines.append(f"Overview: {body[:_SKILL_SUMMARY_MAX_CHARS]}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Remote skill search
+# ---------------------------------------------------------------------------
+
+_DEFAULT_REGISTRIES: list[dict[str, Any]] = [
+    {
+        "name": "skillshub",
+        "search_url": "https://skillshub.wtf/api/v1/skills/search",
+        "params": lambda q, limit: {"q": q, "limit": limit},
+    },
+    {
+        "name": "skillsdirectory",
+        "search_url": "https://skillsdirectory.com/api/registry",
+        "params": lambda q, limit: {"q": q, "limit": limit},
+    },
+]
+
+
+def _parse_skillshub_results(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": s.get("name", s.get("slug", "")),
+            "description": s.get("description", ""),
+            "source": (
+                f"{s['repo']['githubOwner']}/{s['repo']['githubRepoName']}"
+                f"/skills/{s.get('slug', s.get('name', ''))}"
+            )
+            if s.get("repo")
+            else "",
+            "stars": (s.get("repo") or {}).get("starCount", 0),
+            "downloads": (s.get("repo") or {}).get("downloadCount", 0),
+            "registry": "skillshub",
+        }
+        for s in data.get("data", [])
+    ]
+
+
+def _parse_skillsdirectory_results(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": s.get("name", ""),
+            "description": s.get("description", ""),
+            "source": s.get("repository", ""),
+            "stars": s.get("stars", 0),
+            "downloads": 0,
+            "registry": "skillsdirectory",
+        }
+        for s in data.get("skills", [])
+    ]
+
+
+_REGISTRY_PARSERS: dict[str, Any] = {
+    "skillshub": _parse_skillshub_results,
+    "skillsdirectory": _parse_skillsdirectory_results,
+}
+
+
+class SearchRemoteSkillsTool(BaseTool):
+    """Search for installable skills on remote registries (HTTP only)."""
+
+    def __init__(self, skill_store: SkillStore) -> None:
+        self._store = skill_store
+
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            name="search_remote_skills",
+            description=(
+                "Search for skills available on remote registries like "
+                "skillshub.wtf and skillsdirectory.com. Use when you need a "
+                "capability that no installed skill provides. Returns a list "
+                "of available skills with descriptions and install sources "
+                "compatible with install_skill."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What capability you are looking for",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max results per registry (default: 5)",
+                    },
+                },
+                "required": ["query"],
+            },
+        )
+
+    async def execute(self, inputs: dict[str, Any]) -> ToolResult:
+        import httpx
+
+        query = inputs.get("query", "").strip()
+        if not query:
+            return ToolResult(success=False, error="Missing required field: 'query'")
+        max_results = inputs.get("max_results", 5)
+
+        all_results: list[dict[str, Any]] = []
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for reg in _DEFAULT_REGISTRIES:
+                try:
+                    params = reg["params"](query, max_results)
+                    resp = await client.get(reg["search_url"], params=params)
+                    if resp.status_code >= 400:
+                        logger.info(
+                            "registry_search_failed",
+                            registry=reg["name"],
+                            status=resp.status_code,
+                        )
+                        continue
+                    parser = _REGISTRY_PARSERS.get(reg["name"])
+                    if parser:
+                        all_results.extend(parser(resp.json()))
+                except Exception as exc:
+                    logger.info(
+                        "registry_search_error",
+                        registry=reg["name"],
+                        error=str(exc),
+                    )
+
+        installed = {s.name for s in self._store.list_skills()}
+        seen: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for r in all_results:
+            name = r.get("name", "")
+            if name and name not in seen:
+                seen.add(name)
+                r["installed"] = name in installed
+                deduped.append(r)
+
+        deduped.sort(
+            key=lambda r: r.get("downloads", 0) + r.get("stars", 0),
+            reverse=True,
+        )
+
+        return ToolResult(
+            success=True,
+            output={
+                "results": deduped,
+                "query": query,
+                "total_found": len(deduped),
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
 
 def _safe_name(value: str) -> str:
     v = re.sub(r"[^a-zA-Z0-9._-]+", "-", value.strip()).strip("-_.")

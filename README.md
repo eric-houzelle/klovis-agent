@@ -31,6 +31,8 @@ In daemon mode, they observe their environment, decide whether to act, and conso
 
 💾 **Two-zone persistent memory** — episodic (short-lived actions) and semantic (permanent knowledge) with vector search, auto-deduplication, and TTL pruning.
 
+📚 **Autonomous skill acquisition** — the agent discovers, installs, and indexes skills from online registries at runtime. It learns new capabilities on its own when a task requires knowledge it doesn't have yet.
+
 🎭 **Customizable personality (Soul)** — inject a personality via file or string. It shapes the agent's tone, values, and decision-making across all prompts.
 
 🔒 **Safe by default** — destructive tools require explicit confirmation. Code runs in a sandbox (local or [OpenSandbox](https://opensandbox.dev)).
@@ -215,7 +217,7 @@ Each run follows a 5-node graph:
 | Phase | Module | Role |
 |-------|--------|------|
 | **Observe** | `perception.base.perceive()` | Polls all `PerceptionSource`s, aggregates `Event`s |
-| **Orient** | `recall.recall_for_task()` | Searches episodic + semantic memory for relevant memories |
+| **Orient** | `recall.recall_for_task()` | Searches episodic + semantic memory and relevant skills |
 | **Decide** | `decision.decide()` | The LLM analyzes events + memories and decides whether to act |
 | **Act** | `agent.run(goal)` | Runs the full LangGraph execution graph |
 | **Consolidate** | `consolidation.consolidate_run()` | Extracts 2-6 memories from the run and stores them by zone |
@@ -268,9 +270,68 @@ The schema is backward-compatible. Older SQLite databases without a `zone` colum
 
 ---
 
+## Skills & autonomous learning
+
+Skills are markdown documents (`SKILL.md`) that describe external APIs, workflows, or best practices. The agent loads them at runtime to guide its actions — like reading documentation before calling an API.
+
+### Skill lifecycle
+
+```
+Need identified
+  │
+  ▼
+recall_for_task()         Semantic search over indexed skills
+  │
+  ├── Found?  ──▶  read_skill → use it
+  │
+  └── Not found?
+        │
+        ▼
+  search_remote_skills()  Queries skillshub.wtf + skillsdirectory.com
+        │
+        ▼
+  install_skill()         Downloads SKILL.md from GitHub
+        │
+        ▼
+  SkillIndex              Vectorises and stores the summary
+        │
+        ▼
+  consolidate_run()       Memorises "I learned skill X for Y" (semantic zone)
+        │
+        ▼
+  Next run                Skill is found by recall automatically
+```
+
+### How it works
+
+1. **Semantic index** — Each installed skill is vectorised (name + description + overview) and stored in `SemanticMemoryStore` with `memory_type="skill"`. During recall, the agent finds relevant skills by meaning, not by name.
+
+2. **Remote search** — `search_remote_skills` queries public registries via HTTP (no Node.js required). Results include a `source` field directly compatible with `install_skill`.
+
+3. **Auto-indexing** — When a skill is installed (via `install_skill`), it is automatically vectorised and indexed. Existing skills are indexed lazily on the first run.
+
+4. **Consolidation** — After a run where a skill was acquired, the consolidation engine stores a `lesson`-type memory so the agent remembers the capability for future runs.
+
+### Skill storage
+
+| Location | Path | Priority |
+|----------|------|:--------:|
+| Workspace | `./.skills/<name>/SKILL.md` | 1 (highest) |
+| User | `~/.local/share/klovis/skills/<name>/SKILL.md` | 2 |
+| Custom | Paths passed via `skills_dirs=[...]` | configurable |
+
+### Supported registries
+
+| Registry | URL | Auth |
+|----------|-----|:----:|
+| SkillsHub | `skillshub.wtf/api/v1/skills/search` | None |
+| Skills Directory | `skillsdirectory.com/api/registry` | None |
+
+---
+
 ## Tools
 
-32 built-in tools across 8 categories:
+33 built-in tools across 8 categories:
 
 | Category | Tools |
 |----------|-------|
@@ -281,7 +342,7 @@ The schema is backward-compatible. Older SQLite databases without a `zone` colum
 | **Web** | `web_search`, `http_request` |
 | **Code** | `code_execution`, `text_analysis` |
 | **GitHub** | `github_get_repo`, `github_read_file`, `github_list_files`, `github_create_branch`, `github_commit_files`, `github_create_pr`, `github_list_issues`, `github_list_prs`, `github_get_pr`, `github_search_code`, `github_clone_repo`, `github_create_issue`, `github_comment_issue`, `github_get_check_runs` |
-| **Skills** | `list_skills`, `read_skill`, `install_skill` |
+| **Skills** | `list_skills`, `read_skill`, `install_skill`, `search_remote_skills` |
 
 Destructive tools (`fs_delete`, `fs_write`, `shell_command`...) require interactive confirmation. The flag is configurable per tool:
 
@@ -587,7 +648,7 @@ klovis_agent/
 ├── result.py                # AgentResult (user-friendly wrapper)
 ├── daemon.py                # AgentDaemon (OODA loop)
 ├── decision.py              # LLM decision module
-├── recall.py                # Pre-run memory recall (two zones)
+├── recall.py                # Pre-run memory recall (two zones + skill index)
 ├── consolidation.py         # Post-run memory consolidation (zone tagging)
 ├── api.py                   # FastAPI REST API
 │
@@ -619,7 +680,7 @@ klovis_agent/
 │       ├── moltbook.py      # Moltbook tools + perception
 │       ├── github.py        # GitHub tools + perception (optional)
 │       ├── discord_bot.py   # Discord bot perception (optional)
-│       └── skills.py        # list_skills, read_skill, install_skill
+│       └── skills.py        # list_skills, read_skill, install_skill, search_remote_skills, SkillIndex
 │
 ├── perception/              # Perception sources
 │   ├── base.py              # PerceptionSource ABC, Event, EventKind, perceive()
@@ -647,3 +708,4 @@ klovis_agent/
 - **Dynamic planning** — automatic replanning on failure, with error context injection.
 - **Sandbox** — generated code runs in isolation (local or OpenSandbox).
 - **Source-agnostic perception** — the daemon doesn't know where events come from. Any source implementing `PerceptionSource` can feed the loop.
+- **Self-extending** — the agent discovers and installs skills autonomously from online registries. Acquired capabilities are vectorised and recalled semantically in future runs.

@@ -96,6 +96,11 @@ Categories of things worth remembering:
 - **Lessons from errors** → zone: "semantic": what went wrong and how you fixed it
 - **Preferences** → zone: "semantic": how the user likes things done, what works well
 - **Skills** → zone: "semantic": techniques or patterns that proved effective
+- **Skills acquired** → zone: "semantic": record which skill you installed,
+  what it does, and when it was useful. type should be "lesson" or "strategy".
+  Example: {{"content": "Installed 'vercel-deploy' skill to deploy Next.js apps.
+  Provides endpoints for creating deployments and checking status.",
+  "tags": ["skill_acquired", "vercel"], "zone": "semantic", "type": "lesson"}}
 - **Identity** → zone: "semantic": things about yourself (your name, your profile, your style)
 
 Examples of good memories:
