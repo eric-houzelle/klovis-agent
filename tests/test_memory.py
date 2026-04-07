@@ -114,12 +114,12 @@ class TestSemanticMemoryStore:
 
     def test_recall_filter_by_memory_type(self, tmp_path: Path):
         store = SemanticMemoryStore(db_dir=tmp_path)
-        store.add("Global mission: improve karma", [1.0, 0.0], metadata={"type": "mission"})
-        store.add("Preference: answer in French", [1.0, 0.0], metadata={"type": "preference"})
-        store.add("Random fact", [1.0, 0.0], metadata={"type": "fact"})
+        store.add("Global mission: improve karma", [1.0, 0.0, 0.0], metadata={"type": "mission"})
+        store.add("Preference: answer in French", [0.0, 1.0, 0.0], metadata={"type": "preference"})
+        store.add("Random fact", [0.0, 0.0, 1.0], metadata={"type": "fact"})
 
         results = store.search(
-            [1.0, 0.0],
+            [0.6, 0.6, 0.6],
             k=10,
             min_similarity=0.1,
             zone="semantic",
@@ -130,13 +130,162 @@ class TestSemanticMemoryStore:
 
     def test_count_by_type(self, tmp_path: Path):
         store = SemanticMemoryStore(db_dir=tmp_path)
-        store.add("m", [1.0, 0.0], metadata={"type": "mission"})
-        store.add("p", [1.0, 0.0], metadata={"type": "preference"})
-        store.add("a", [1.0, 0.0], zone="episodic")
+        store.add("m", [1.0, 0.0, 0.0], metadata={"type": "mission"})
+        store.add("p", [0.0, 1.0, 0.0], metadata={"type": "preference"})
+        store.add("a", [0.0, 0.0, 1.0], zone="episodic")
         counts = store.count_by_type()
         assert counts["mission"] == 1
         assert counts["preference"] == 1
         assert counts["action"] == 1
+
+    def test_count_by_category_defaults_to_type(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("m", [1.0, 0.0, 0.0], metadata={"type": "mission"})
+        store.add("p", [0.0, 1.0, 0.0], metadata={"type": "preference"})
+        store.add("a", [0.0, 0.0, 1.0], zone="episodic")
+        counts = store.count_by_category()
+        assert counts["mission"] == 1
+        assert counts["preference"] == 1
+        assert counts["action"] == 1
+
+    def test_recall_filter_by_dynamic_category(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add(
+            "workspace note",
+            [1.0, 0.0, 0.0],
+            metadata={"category": "project", "namespace": "autonomous-agent"},
+        )
+        store.add(
+            "food note",
+            [0.0, 1.0, 0.0],
+            metadata={"category": "personal", "namespace": "daily-life"},
+        )
+        results = store.search(
+            [0.6, 0.6, 0.0],
+            k=10,
+            min_similarity=0.1,
+            category="project",
+            namespace="autonomous-agent",
+        )
+        assert len(results) == 1
+        assert results[0]["metadata"]["category"] == "project"
+        assert results[0]["metadata"]["namespace"] == "autonomous-agent"
+
+    def test_recall_filter_rejects_wrong_category(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("note A", [1.0, 0.0, 0.0], metadata={"category": "work"})
+        store.add("note B", [0.0, 1.0, 0.0], metadata={"category": "personal"})
+        results = store.search(
+            [0.6, 0.6, 0.0], k=10, min_similarity=0.1, category="work",
+        )
+        assert len(results) == 1
+        assert results[0]["metadata"]["category"] == "work"
+
+    def test_recall_filter_rejects_wrong_namespace(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("n1", [1.0, 0.0, 0.0], metadata={"namespace": "proj-a"})
+        store.add("n2", [0.0, 1.0, 0.0], metadata={"namespace": "proj-b"})
+        results = store.search(
+            [0.6, 0.6, 0.0], k=10, min_similarity=0.1, namespace="proj-a",
+        )
+        assert len(results) == 1
+        assert results[0]["metadata"]["namespace"] == "proj-a"
+
+    def test_recall_filter_by_subcategory(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("s1", [1.0, 0.0, 0.0], metadata={"subcategory": "planning"})
+        store.add("s2", [0.0, 1.0, 0.0], metadata={"subcategory": "execution"})
+        results = store.search(
+            [0.6, 0.6, 0.0], k=10, min_similarity=0.1, subcategory="planning",
+        )
+        assert len(results) == 1
+        assert results[0]["metadata"]["subcategory"] == "planning"
+
+    def test_recall_filter_by_categories_list(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("c1", [1.0, 0.0, 0.0], metadata={"category": "work"})
+        store.add("c2", [0.0, 1.0, 0.0], metadata={"category": "personal"})
+        store.add("c3", [0.0, 0.0, 1.0], metadata={"category": "health"})
+        results = store.search(
+            [0.6, 0.0, 0.6], k=10, min_similarity=0.1,
+            categories=["work", "health"],
+        )
+        cats = {r["metadata"]["category"] for r in results}
+        assert cats == {"work", "health"}
+
+    def test_recall_no_category_filter_returns_all(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("a", [1.0, 0.0, 0.0], metadata={"category": "x"})
+        store.add("b", [0.0, 1.0, 0.0], metadata={"category": "y"})
+        results = store.search([0.6, 0.6, 0.0], k=10, min_similarity=0.1)
+        assert len(results) == 2
+
+    def test_list_recent_with_category_filter(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("r1", [1.0, 0.0], metadata={"category": "work"})
+        store.add("r2", [0.0, 1.0], metadata={"category": "personal"})
+        recent = store.list_recent(limit=10, category="work")
+        assert len(recent) == 1
+        assert recent[0]["metadata"]["category"] == "work"
+
+    def test_list_categories(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        store.add("a", [1.0, 0.0, 0.0], metadata={"category": "work"})
+        store.add("b", [0.0, 1.0, 0.0], metadata={"category": "work"})
+        store.add("c", [0.0, 0.0, 1.0], metadata={"category": "personal"})
+        cats = store.list_categories(limit=10)
+        assert cats[0] == {"category": "work", "count": 2}
+        assert cats[1] == {"category": "personal", "count": 1}
+
+    def test_reclassify_updates_metadata(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        mid = store.add(
+            "initial",
+            [1.0, 0.0],
+            metadata={"type": "fact", "tags": ["old"]},
+            zone="semantic",
+        )
+        updated = store.reclassify(
+            [mid],
+            memory_type="strategy",
+            category="workflow",
+            subcategory="memory",
+            namespace="autonomous-agent",
+            tags=["new"],
+            merge_tags=True,
+        )
+        assert len(updated) == 1
+        meta = updated[0]["metadata"]
+        assert meta["type"] == "strategy"
+        assert meta["category"] == "workflow"
+        assert meta["subcategory"] == "memory"
+        assert meta["namespace"] == "autonomous-agent"
+        assert set(meta["tags"]) == {"old", "new"}
+
+    def test_reclassify_replace_tags(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        mid = store.add("t", [1.0, 0.0], metadata={"tags": ["old"]})
+        updated = store.reclassify([mid], tags=["only-this"], merge_tags=False)
+        assert updated[0]["metadata"]["tags"] == ["only-this"]
+
+    def test_reclassify_empty_ids_returns_empty(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        assert store.reclassify([], category="x") == []
+
+    def test_reclassify_nonexistent_ids_returns_empty(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        assert store.reclassify([999, 1000], category="x") == []
+
+    def test_reclassify_clears_optional_fields(self, tmp_path: Path):
+        store = SemanticMemoryStore(db_dir=tmp_path)
+        mid = store.add(
+            "full", [1.0, 0.0],
+            metadata={"subcategory": "old-sub", "namespace": "old-ns"},
+        )
+        updated = store.reclassify([mid], subcategory="", namespace="")
+        meta = updated[0]["metadata"]
+        assert "subcategory" not in meta
+        assert "namespace" not in meta
 
     def test_delete(self, tmp_path: Path):
         store = SemanticMemoryStore(db_dir=tmp_path)

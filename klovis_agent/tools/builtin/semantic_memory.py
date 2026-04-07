@@ -78,6 +78,24 @@ def _normalize_metadata(
     if mtype not in _VALID_MEMORY_TYPES:
         mtype = "other"
     meta["type"] = mtype
+
+    # Dynamic "cases" layer on top of core memory_type.
+    category = str(meta.get("category", "")).strip().lower()
+    if not category:
+        category = mtype
+    meta["category"] = category
+
+    subcategory = str(meta.get("subcategory", "")).strip().lower()
+    if subcategory:
+        meta["subcategory"] = subcategory
+    else:
+        meta.pop("subcategory", None)
+
+    namespace = str(meta.get("namespace", "")).strip().lower()
+    if namespace:
+        meta["namespace"] = namespace
+    else:
+        meta.pop("namespace", None)
     return meta
 
 
@@ -95,6 +113,33 @@ def _matches_type_filter(
         allowed = {str(t).strip().lower() for t in memory_types if str(t).strip()}
         if allowed and mtype not in allowed:
             return False
+    return True
+
+
+def _matches_category_filter(
+    metadata: dict[str, Any],
+    category: str | None,
+    categories: list[str] | None,
+    namespace: str | None,
+    subcategory: str | None,
+) -> bool:
+    if not category and not categories and not namespace and not subcategory:
+        return True
+
+    m_category = str(metadata.get("category", "")).strip().lower()
+    m_namespace = str(metadata.get("namespace", "")).strip().lower()
+    m_subcategory = str(metadata.get("subcategory", "")).strip().lower()
+
+    if category and m_category != str(category).strip().lower():
+        return False
+    if categories:
+        allowed = {str(c).strip().lower() for c in categories if str(c).strip()}
+        if allowed and m_category not in allowed:
+            return False
+    if namespace and m_namespace != str(namespace).strip().lower():
+        return False
+    if subcategory and m_subcategory != str(subcategory).strip().lower():
+        return False
     return True
 
 
@@ -248,6 +293,10 @@ class SemanticMemoryStore:
         zone: MemoryZone | None = None,
         memory_type: MemoryType | None = None,
         memory_types: list[str] | None = None,
+        category: str | None = None,
+        categories: list[str] | None = None,
+        namespace: str | None = None,
+        subcategory: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search memories by similarity.
 
@@ -283,6 +332,14 @@ class SemanticMemoryStore:
                 continue
             metadata = json.loads(meta_json)
             if not _matches_type_filter(metadata, memory_type, memory_types):
+                continue
+            if not _matches_category_filter(
+                metadata,
+                category=category,
+                categories=categories,
+                namespace=namespace,
+                subcategory=subcategory,
+            ):
                 continue
 
             if row_zone == "episodic":
@@ -322,6 +379,10 @@ class SemanticMemoryStore:
         min_similarity: float = 0.3,
         memory_type: MemoryType | None = None,
         memory_types: list[str] | None = None,
+        category: str | None = None,
+        categories: list[str] | None = None,
+        namespace: str | None = None,
+        subcategory: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search both zones independently and merge results.
 
@@ -332,11 +393,15 @@ class SemanticMemoryStore:
             query_embedding, k=k_episodic,
             min_similarity=min_similarity, zone="episodic",
             memory_type=memory_type, memory_types=memory_types,
+            category=category, categories=categories,
+            namespace=namespace, subcategory=subcategory,
         )
         semantic = self.search(
             query_embedding, k=k_semantic,
             min_similarity=min_similarity, zone="semantic",
             memory_type=memory_type, memory_types=memory_types,
+            category=category, categories=categories,
+            namespace=namespace, subcategory=subcategory,
         )
 
         seen_ids = set()
@@ -376,10 +441,7 @@ class SemanticMemoryStore:
         return self._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
 
     def count_by_type(self) -> dict[str, int]:
-        if self._has_zone:
-            rows = self._conn.execute("SELECT metadata FROM memories").fetchall()
-        else:
-            rows = self._conn.execute("SELECT metadata FROM memories").fetchall()
+        rows = self._conn.execute("SELECT metadata FROM memories").fetchall()
         counts: dict[str, int] = {}
         for (meta_json,) in rows:
             try:
@@ -392,12 +454,35 @@ class SemanticMemoryStore:
             counts[mtype] = counts.get(mtype, 0) + 1
         return counts
 
+    def count_by_category(self) -> dict[str, int]:
+        rows = self._conn.execute("SELECT metadata FROM memories").fetchall()
+        counts: dict[str, int] = {}
+        for (meta_json,) in rows:
+            try:
+                meta = json.loads(meta_json)
+            except Exception:
+                meta = {}
+            category = str(meta.get("category", "")).strip().lower()
+            if not category:
+                category = str(meta.get("type", "other")).strip().lower() or "other"
+            counts[category] = counts.get(category, 0) + 1
+        return counts
+
+    def list_categories(self, limit: int = 50) -> list[dict[str, Any]]:
+        counts = self.count_by_category()
+        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        return [{"category": name, "count": count} for name, count in ranked[:limit]]
+
     def list_recent(
         self,
         limit: int = 10,
         zone: MemoryZone | None = None,
         memory_type: MemoryType | None = None,
         memory_types: list[str] | None = None,
+        category: str | None = None,
+        categories: list[str] | None = None,
+        namespace: str | None = None,
+        subcategory: str | None = None,
     ) -> list[dict[str, Any]]:
         if self._has_zone:
             if zone:
@@ -433,8 +518,101 @@ class SemanticMemoryStore:
         filtered = [
             item for item in items
             if _matches_type_filter(item["metadata"], memory_type, memory_types)
+            and _matches_category_filter(
+                item["metadata"],
+                category=category,
+                categories=categories,
+                namespace=namespace,
+                subcategory=subcategory,
+            )
         ]
         return filtered[:limit]
+
+    def reclassify(
+        self,
+        memory_ids: list[int],
+        *,
+        memory_type: str | None = None,
+        category: str | None = None,
+        subcategory: str | None = None,
+        namespace: str | None = None,
+        tags: list[str] | None = None,
+        merge_tags: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Update metadata fields for existing memories and return updated rows."""
+        if not memory_ids:
+            return []
+
+        unique_ids = sorted({int(i) for i in memory_ids})
+        if not unique_ids:
+            return []
+
+        qmarks = ",".join(["?"] * len(unique_ids))
+        rows = self._conn.execute(
+            f"SELECT id, content, metadata, created_at, access_count, zone FROM memories WHERE id IN ({qmarks})",  # noqa: S608
+            unique_ids,
+        ).fetchall()
+        if not rows:
+            return []
+
+        updated: list[dict[str, Any]] = []
+        for row_id, content, meta_json, created_at, access_count, zone in rows:
+            try:
+                meta = json.loads(meta_json)
+            except Exception:
+                meta = {}
+
+            if memory_type is not None:
+                mtype = str(memory_type).strip().lower()
+                if mtype not in _VALID_MEMORY_TYPES:
+                    mtype = "other"
+                meta["type"] = mtype
+            if category is not None:
+                cat = str(category).strip().lower()
+                if cat:
+                    meta["category"] = cat
+                else:
+                    meta.pop("category", None)
+            if subcategory is not None:
+                sub = str(subcategory).strip().lower()
+                if sub:
+                    meta["subcategory"] = sub
+                else:
+                    meta.pop("subcategory", None)
+            if namespace is not None:
+                ns = str(namespace).strip().lower()
+                if ns:
+                    meta["namespace"] = ns
+                else:
+                    meta.pop("namespace", None)
+            if tags is not None:
+                cleaned = [str(t).strip() for t in tags if str(t).strip()]
+                if merge_tags:
+                    prev = meta.get("tags", [])
+                    if not isinstance(prev, list):
+                        prev = []
+                    meta["tags"] = sorted({*map(str, prev), *cleaned})
+                else:
+                    meta["tags"] = cleaned
+
+            normalized = _normalize_metadata(meta, zone=zone)
+            self._conn.execute(
+                "UPDATE memories SET metadata = ? WHERE id = ?",
+                (json.dumps(normalized, ensure_ascii=False, default=str), row_id),
+            )
+            updated.append(
+                {
+                    "id": row_id,
+                    "content": content,
+                    "metadata": normalized,
+                    "created_at": created_at,
+                    "access_count": access_count,
+                    "zone": zone,
+                }
+            )
+
+        self._conn.commit()
+        return updated
 
 
 class SemanticMemoryTool(BaseTool):
@@ -469,14 +647,16 @@ class SemanticMemoryTool(BaseTool):
                 "'remember' — store knowledge (set zone='episodic' for actions). "
                 "'recall' — search by meaning across both zones. "
                 "'forget' — delete a specific memory by ID. "
-                "'stats' — show memory counts per zone and recent entries."
+                "'stats' — show memory counts per zone and recent entries. "
+                "'cases' — list dynamic memory categories currently in use. "
+                "'reclassify' — reorganize memory metadata for existing IDs."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "operation": {
                         "type": "string",
-                        "enum": ["remember", "recall", "forget", "stats"],
+                        "enum": ["remember", "recall", "forget", "stats", "cases", "reclassify"],
                     },
                     "content": {
                         "type": "string",
@@ -521,13 +701,42 @@ class SemanticMemoryTool(BaseTool):
                         },
                         "description": "Optional list of categories to include during recall.",
                     },
+                    "category": {
+                        "type": "string",
+                        "description": (
+                            "Dynamic memory case name (free-form). "
+                            "Use for remember, recall filters, or reclassify."
+                        ),
+                    },
+                    "categories": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of dynamic categories to include during recall.",
+                    },
+                    "subcategory": {
+                        "type": "string",
+                        "description": "Optional subcategory case (free-form).",
+                    },
+                    "namespace": {
+                        "type": "string",
+                        "description": "Optional namespace to group memory cases (e.g. project slug).",
+                    },
                     "memory_id": {
                         "type": "integer",
                         "description": "The memory ID to delete (only for 'forget')",
                     },
+                    "memory_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Memory IDs to update (for reclassify).",
+                    },
                     "k": {
                         "type": "integer",
                         "description": "Number of results to return for 'recall' (default: 5)",
+                    },
+                    "merge_tags": {
+                        "type": "boolean",
+                        "description": "For reclassify: merge new tags with existing ones (default: true).",
                     },
                 },
                 "required": ["operation"],
@@ -556,6 +765,9 @@ class SemanticMemoryTool(BaseTool):
             memory_type = inputs.get("memory_type")
             if memory_type and memory_type not in _VALID_MEMORY_TYPES:
                 memory_type = "other"
+            category = inputs.get("category")
+            subcategory = inputs.get("subcategory")
+            namespace = inputs.get("namespace")
             try:
                 embedding = await self._embedder.embed_one(content)
             except Exception as exc:
@@ -564,7 +776,13 @@ class SemanticMemoryTool(BaseTool):
             memory_id = self._store.add(
                 content=content,
                 embedding=embedding,
-                metadata={"tags": tags, "type": memory_type},
+                metadata={
+                    "tags": tags,
+                    "type": memory_type,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "namespace": namespace,
+                },
                 zone=zone,
             )
             logger.info("semantic_memory_stored", memory_id=memory_id, tags=tags, zone=zone)
@@ -593,6 +811,18 @@ class SemanticMemoryTool(BaseTool):
             memory_types = inputs.get("memory_types")
             if not isinstance(memory_types, list):
                 memory_types = None
+            category = inputs.get("category")
+            if category is not None:
+                category = str(category).strip().lower() or None
+            categories = inputs.get("categories")
+            if not isinstance(categories, list):
+                categories = None
+            namespace = inputs.get("namespace")
+            if namespace is not None:
+                namespace = str(namespace).strip().lower() or None
+            subcategory = inputs.get("subcategory")
+            if subcategory is not None:
+                subcategory = str(subcategory).strip().lower() or None
             try:
                 query_embedding = await self._embedder.embed_one(query)
             except Exception as exc:
@@ -605,6 +835,10 @@ class SemanticMemoryTool(BaseTool):
                     zone=zone_filter,
                     memory_type=memory_type,
                     memory_types=memory_types,
+                    category=category,
+                    categories=categories,
+                    namespace=namespace,
+                    subcategory=subcategory,
                 )
             else:
                 results = self._store.search_zones(
@@ -613,6 +847,10 @@ class SemanticMemoryTool(BaseTool):
                     k_semantic=max(1, k - k // 2),
                     memory_type=memory_type,
                     memory_types=memory_types,
+                    category=category,
+                    categories=categories,
+                    namespace=namespace,
+                    subcategory=subcategory,
                 )
             logger.info("semantic_memory_recall", query=query[:80], results=len(results))
             return ToolResult(
@@ -644,11 +882,76 @@ class SemanticMemoryTool(BaseTool):
                     "episodic_count": episodic_count,
                     "semantic_count": semantic_count,
                     "counts_by_type": self._store.count_by_type(),
+                    "counts_by_category": self._store.count_by_category(),
                     "recent": recent,
+                },
+            )
+
+        if operation == "cases":
+            cases = self._store.list_categories(limit=100)
+            return ToolResult(
+                success=True,
+                output={
+                    "cases": cases,
+                    "total_cases": len(cases),
+                },
+            )
+
+        if operation == "reclassify":
+            memory_id = inputs.get("memory_id")
+            memory_ids = inputs.get("memory_ids")
+            ids: list[int] = []
+            if memory_id is not None:
+                ids.append(int(memory_id))
+            if isinstance(memory_ids, list):
+                ids.extend(int(v) for v in memory_ids)
+            ids = sorted({*ids})
+            if not ids:
+                return ToolResult(
+                    success=False,
+                    error="'reclassify' requires 'memory_id' or 'memory_ids'",
+                )
+
+            memory_type = inputs.get("memory_type")
+            category = inputs.get("category")
+            subcategory = inputs.get("subcategory")
+            namespace = inputs.get("namespace")
+            tags = inputs.get("tags")
+            if tags is not None and not isinstance(tags, list):
+                return ToolResult(success=False, error="'tags' must be a list when provided")
+            merge_tags = bool(inputs.get("merge_tags", True))
+            if all(v is None for v in (memory_type, category, subcategory, namespace, tags)):
+                return ToolResult(
+                    success=False,
+                    error="'reclassify' requires at least one field to update",
+                )
+
+            updated = self._store.reclassify(
+                ids,
+                memory_type=memory_type,
+                category=category,
+                subcategory=subcategory,
+                namespace=namespace,
+                tags=tags,
+                merge_tags=merge_tags,
+            )
+            if not updated:
+                return ToolResult(
+                    success=False,
+                    error="No matching memory IDs found",
+                )
+            return ToolResult(
+                success=True,
+                output={
+                    "updated_count": len(updated),
+                    "updated": updated,
                 },
             )
 
         return ToolResult(
             success=False,
-            error=f"Unknown operation: '{operation}'. Use: remember, recall, forget, stats",
+            error=(
+                f"Unknown operation: '{operation}'. "
+                "Use: remember, recall, forget, stats, cases, reclassify"
+            ),
         )
