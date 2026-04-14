@@ -18,6 +18,13 @@ from klovis_agent.tools.builtin.skills import (
 )
 from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
 
+try:
+    from klovis_agent.tools.builtin.browser import BrowserTool
+
+    _HAS_PLAYWRIGHT = True
+except ImportError:
+    _HAS_PLAYWRIGHT = False
+
 if TYPE_CHECKING:
     from klovis_agent.llm.embeddings import EmbeddingClient
     from klovis_agent.sandbox.service import SandboxExecutionService
@@ -31,7 +38,7 @@ def default_tools(
     skill_store: SkillStore | None = None,
 ) -> list[BaseTool]:
     """Standard set of tools for a full-featured agent."""
-    return [
+    tools: list[BaseTool] = [
         CodeExecutionTool(sandbox),
         FileReadTool(workspace),
         FileWriteTool(workspace),
@@ -47,6 +54,9 @@ def default_tools(
             else []
         ),
     ]
+    if _HAS_PLAYWRIGHT:
+        tools.append(BrowserTool())
+    return tools
 
 
 def minimal_tools() -> list[BaseTool]:

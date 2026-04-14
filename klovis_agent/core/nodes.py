@@ -186,6 +186,40 @@ def _short(val: Any) -> str:
     return s[:60] + "..." if len(s) > 60 else s
 
 
+_NARRATE_INTENT_SYSTEM = (
+    "You are a concise narrator for an autonomous agent. "
+    "Summarize in ONE short sentence (max 15 words) what the agent is about to do. "
+    "Be friendly and clear. Write in the same language as the objective."
+)
+
+_NARRATE_OUTCOME_SYSTEM = (
+    "You are a concise narrator for an autonomous agent. "
+    "Summarize in ONE short sentence (max 15 words) what just happened. "
+    "Be friendly and clear. Write in the same language as the objective."
+)
+
+
+async def _stream_narration(
+    llm: LLMRouter,
+    con: Any,
+    system: str,
+    user: str,
+) -> None:
+    """Stream a short LLM-generated summary to the console."""
+    request = ModelRequest(
+        purpose="narration",
+        system_prompt=system,
+        user_prompt=user,
+        max_tokens=80,
+        temperature=0.3,
+    )
+    try:
+        async for token in llm.invoke_stream(request):
+            con.stream_token(token)
+    except Exception:
+        logger.debug("narration_stream_failed", exc_info=True)
+
+
 def _record_llm_usage(
     state: dict[str, Any],
     *,
@@ -327,6 +361,16 @@ async def execute_node(
     step_num, total = _step_number(agent_state)
     con.step_start(step_num, total, step.title)
 
+    # --- Stream intent narration ---
+    if not con.quiet:
+        con.step_intent_start()
+        await _stream_narration(
+            llm, con,
+            system=_NARRATE_INTENT_SYSTEM,
+            user=f"Step: {step.title}\nObjective: {step.objective}",
+        )
+        con.stream_end()
+
     step.status = "running"
     all_tool_specs = tool_registry.list_specs()
     tools_doc = format_tool_catalog(all_tool_specs)
@@ -351,6 +395,8 @@ async def execute_node(
         ),
         structured_output_schema=EXECUTE_OUTPUT_SCHEMA,
     )
+
+    step_tokens_before = int(state.get("_token_usage", {}).get("total_tokens", 0))
 
     response = await llm.invoke(request)
     _record_llm_usage(
@@ -440,6 +486,25 @@ async def execute_node(
 
     preview = _output_preview(outputs)
     con.step_success(tool_used, preview)
+
+    # --- Stream outcome narration ---
+    if not con.quiet:
+        step_tokens_after = int(
+            state.get("_token_usage", {}).get("total_tokens", 0),
+        )
+        step_tokens = step_tokens_after - step_tokens_before
+
+        con.step_outcome_start(success=True)
+        await _stream_narration(
+            llm, con,
+            system=_NARRATE_OUTCOME_SYSTEM,
+            user=(
+                f"Step: {step.title}\n"
+                f"Tool used: {tool_used or 'direct response'}\n"
+                f"Result: {preview}"
+            ),
+        )
+        con.step_outcome_end(step_tokens)
 
     logger.info("step_executed", step_id=step.step_id, tool=tool_used)
     return state
@@ -670,12 +735,28 @@ async def finish_node(
         con._debug_json("FINISH", response.structured_output)
         _validate_output(FinishOutput, response.structured_output)
         state["artifacts"]["_final_summary"] = response.structured_output
+
+        summary = response.structured_output.get("summary", "")
+        status = response.structured_output.get("overall_status", "?")
         con.finish(
-            response.structured_output.get("overall_status", "?"),
-            response.structured_output.get("summary", ""),
+            status,
+            summary,
             agent_state.iteration_count,
             response.structured_output.get("limitations"),
         )
+
+        if not con.quiet and summary:
+            con.finish_narration_start()
+            await _stream_narration(
+                llm, con,
+                system=(
+                    "You are a concise narrator for an autonomous agent. "
+                    "Rephrase this execution summary in 2-3 short, friendly sentences. "
+                    "Keep it informative but concise. Write in the same language as the goal."
+                ),
+                user=f"Goal: {agent_state.task.goal}\nSummary: {summary}",
+            )
+            con.stream_end()
 
     state["status"] = "completed"
     state["artifacts"]["_token_usage"] = state.get("_token_usage", {})

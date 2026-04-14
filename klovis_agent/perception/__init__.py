@@ -11,10 +11,12 @@ if TYPE_CHECKING:
         PerceptionSource,
         perceive,
     )
+    from klovis_agent.perception.bus import EventBus
     from klovis_agent.perception.inbox import InboxPerceptionSource
 
 __all__ = [
     "Event",
+    "EventBus",
     "EventKind",
     "InboxPerceptionSource",
     "PerceptionResult",
@@ -24,6 +26,7 @@ __all__ = [
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Event": ("klovis_agent.perception.base", "Event"),
+    "EventBus": ("klovis_agent.perception.bus", "EventBus"),
     "EventKind": ("klovis_agent.perception.base", "EventKind"),
     "InboxPerceptionSource": ("klovis_agent.perception.inbox", "InboxPerceptionSource"),
     "PerceptionResult": ("klovis_agent.perception.base", "PerceptionResult"),

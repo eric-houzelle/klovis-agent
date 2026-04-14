@@ -1152,15 +1152,6 @@ class MoltbookPerceptionSource(PerceptionSource):
                             metadata={"pending_dms": pending},
                         ))
 
-                    actions = data.get("what_to_do_next", [])
-                    if isinstance(actions, list):
-                        for a in actions[:3]:
-                            text = a if isinstance(a, str) else json.dumps(a, default=str)
-                            events.append(Event(
-                                source="moltbook",
-                                kind=EventKind.OTHER,
-                                title=f"Suggested: {text[:120]}",
-                            ))
             except Exception as exc:
                 logger.warning("moltbook_perception_home_error", error=str(exc))
 
@@ -1171,30 +1162,52 @@ class MoltbookPerceptionSource(PerceptionSource):
                 if resp.status_code < 400:
                     data = _safe_json(resp)
                     for n in data.get("notifications", [])[:15]:
-                        if n.get("is_read"):
+                        if n.get("isRead"):
                             continue
                         notif_id = n.get("id", "")
                         if notif_id and notif_id in self._seen_notification_ids:
                             continue
                         if notif_id:
                             self._seen_notification_ids.add(notif_id)
+
+                        ntype = n.get("type", "")
                         kind_map = {
-                            "comment": EventKind.NOTIFICATION,
+                            "post_comment": EventKind.NOTIFICATION,
                             "mention": EventKind.MENTION,
                             "upvote": EventKind.REACTION,
-                            "follow": EventKind.NOTIFICATION,
-                            "dm": EventKind.MESSAGE,
+                            "new_follower": EventKind.NOTIFICATION,
+                            "dm_request": EventKind.MESSAGE,
                         }
+
+                        post = n.get("post") or {}
+                        comment = n.get("comment") or {}
+                        post_title = post.get("title", "")
+                        comment_text = comment.get("content", "")
+
+                        title = n.get("content", "notification")
+                        if post_title:
+                            title = f"{title} — {post_title[:80]}"
+
+                        detail_parts: list[str] = []
+                        if comment_text:
+                            detail_parts.append(f'"{comment_text[:150]}"')
+                        if detail_parts:
+                            detail = " | ".join(detail_parts)
+                        else:
+                            detail = ""
+
                         events.append(Event(
                             source="moltbook",
-                            kind=kind_map.get(n.get("type", ""), EventKind.NOTIFICATION),
-                            title=n.get("message", "notification"),
-                            detail=f"from {n.get('from_agent_name', '?')}",
+                            kind=kind_map.get(ntype, EventKind.NOTIFICATION),
+                            title=title,
+                            detail=detail,
                             metadata={
                                 "notification_id": notif_id,
-                                "type": n.get("type"),
-                                "post_id": n.get("post_id", ""),
-                                "from": n.get("from_agent_name", ""),
+                                "type": ntype,
+                                "post_id": n.get("relatedPostId", ""),
+                                "comment_id": n.get("relatedCommentId", ""),
+                                "post_title": post_title,
+                                "comment_text": comment_text[:200],
                             },
                         ))
             except Exception as exc:

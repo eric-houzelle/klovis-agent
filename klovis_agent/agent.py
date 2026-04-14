@@ -61,6 +61,14 @@ from klovis_agent.tools.builtin.skills import (
 )
 from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
 from klovis_agent.tools.registry import ToolRegistry
+
+try:
+    from klovis_agent.tools.builtin.browser import BrowserTool as _BrowserTool
+
+    _HAS_PLAYWRIGHT = True
+except ImportError:
+    _HAS_PLAYWRIGHT = False
+
 from klovis_agent.tools.workspace import AgentWorkspace
 
 if TYPE_CHECKING:
@@ -210,6 +218,11 @@ class Agent:
             ]
             if sem_tools:
                 self._semantic_store = sem_tools[0].store
+            if _HAS_PLAYWRIGHT:
+                browser_tools = [t for t in tools if isinstance(t, _BrowserTool)]
+                self._browser_tool = browser_tools[0] if browser_tools else None
+            else:
+                self._browser_tool = None
             return registry
 
         return self._default_registry()
@@ -240,6 +253,13 @@ class Agent:
         registry.register(HttpRequestTool(skill_store=self._skill_store))
 
         registry.register(WebSearchTool())
+
+        if _HAS_PLAYWRIGHT:
+            self._browser_tool = _BrowserTool()
+            registry.register(self._browser_tool)
+        else:
+            self._browser_tool = None
+
         registry.register(MemoryTool())
         sem_tool = SemanticMemoryTool(self._embedder)
         self._semantic_store = sem_tool.store
@@ -283,11 +303,14 @@ class Agent:
         Args:
             goal: The objective to achieve.
             **kwargs: Extra fields forwarded to ``Task`` (task_id, context,
-                constraints, success_criteria).
+                constraints, success_criteria). Pass ``show_goal=False`` to
+                suppress the goal banner (e.g. when the daemon already
+                displayed a decision narration).
 
         Returns:
             An ``AgentResult`` wrapping the final state.
         """
+        show_goal = kwargs.pop("show_goal", True)
         run_id = str(ULID())
 
         task = Task(
@@ -298,7 +321,7 @@ class Agent:
             success_criteria=kwargs.pop("success_criteria", []),
         )
 
-        self._console.run_start(goal, run_id)
+        self._console.run_start(goal, run_id, show_goal=show_goal)
 
         if self._skill_index and not self._skills_indexed:
             await self._index_existing_skills()
@@ -353,6 +376,8 @@ class Agent:
             final_state_dict = await self._compiled_graph.ainvoke(state_dict)
         finally:
             await self._sandbox.cleanup()
+            if self._browser_tool is not None:
+                await self._browser_tool.cleanup()
 
         if "_token_usage" in final_state_dict:
             artifacts = final_state_dict.get("artifacts", {})
@@ -397,15 +422,13 @@ class Agent:
 
     def as_daemon(
         self,
-        interval_minutes: float = 30,
         max_cycles: int = 0,
     ) -> "AgentDaemon":  # noqa: F821
-        """Create a daemon that uses this agent for execution."""
+        """Create a reactive daemon that uses this agent for execution."""
         from klovis_agent.daemon import AgentDaemon
 
         return AgentDaemon(
             agent=self,
-            interval_minutes=interval_minutes,
             max_cycles=max_cycles,
             verbose=self._verbose,
             sources=self._perceptions,

@@ -466,24 +466,27 @@ class SemanticMemoryStore:
         memory_type: MemoryType | None = None,
         memory_types: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        needs_type_filter = bool(memory_type or memory_types)
+        fetch_limit = limit * 10 if needs_type_filter else limit
+
         if self._has_zone:
             if zone:
                 rows = self._conn.execute(
                     "SELECT id, content, metadata, created_at, access_count, zone "
                     "FROM memories WHERE zone = ? ORDER BY created_at DESC LIMIT ?",
-                    (zone, limit),
+                    (zone, fetch_limit),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
                     "SELECT id, content, metadata, created_at, access_count, zone "
                     "FROM memories ORDER BY created_at DESC LIMIT ?",
-                    (limit,),
+                    (fetch_limit,),
                 ).fetchall()
         else:
             rows_raw = self._conn.execute(
                 "SELECT id, content, metadata, created_at, access_count "
                 "FROM memories ORDER BY created_at DESC LIMIT ?",
-                (limit,),
+                (fetch_limit,),
             ).fetchall()
             rows = [(*r, "semantic") for r in rows_raw]
         items = [

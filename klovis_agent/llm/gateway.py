@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 import structlog
@@ -154,6 +155,25 @@ class OpenAIGateway:
                     await asyncio.sleep(backoff)
 
         raise last_exc  # type: ignore[misc]
+
+    async def invoke_stream(self, request: ModelRequest) -> AsyncIterator[str]:
+        """Yield text chunks as they arrive from the API (no structured output)."""
+        messages = [
+            {"role": "system", "content": request.system_prompt},
+            {"role": "user", "content": request.user_prompt},
+        ]
+        kwargs: dict[str, object] = {
+            "model": self._default_model,
+            "messages": messages,
+            "temperature": request.temperature if request.temperature is not None else 0.2,
+            "max_tokens": request.max_tokens or 256,
+            "stream": True,
+        }
+        response = await self._client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
+        async for chunk in response:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                yield delta.content
 
     async def invoke(self, request: ModelRequest) -> ModelResponse:
         start = time.monotonic()

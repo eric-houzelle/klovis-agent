@@ -45,6 +45,7 @@ sandbox = [
     "opensandbox",
     "opensandbox-code-interpreter",
 ]
+browser = ["playwright>=1.48.0"]
 full = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -53,6 +54,7 @@ full = [
     "cryptography>=42.0.0",
     "opensandbox",
     "opensandbox-code-interpreter",
+    "playwright>=1.48.0",
 ]
 
 [project.urls]

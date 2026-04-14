@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import structlog
 
 from klovis_agent.llm.gateway import ModelGateway, OpenAIGateway
@@ -70,3 +72,20 @@ class LLMRouter:
 
         logger.info("llm_route", purpose=request.purpose, model=model)
         return await gateway.invoke(request)
+
+    async def invoke_stream(self, request: ModelRequest) -> AsyncIterator[str]:
+        """Stream text chunks for lightweight narration calls."""
+        model = self._policy.model_for_purpose(request.purpose, self._default_model)
+        phase_base_url = self._policy.base_url_for_purpose(request.purpose)
+        gateway = self._get_gateway(model, phase_base_url)
+
+        temp = (
+            request.temperature
+            if request.temperature is not None
+            else self._default_temperature
+        )
+        request = request.model_copy(update={"temperature": temp})
+
+        logger.info("llm_route_stream", purpose=request.purpose, model=model)
+        async for chunk in gateway.invoke_stream(request):
+            yield chunk

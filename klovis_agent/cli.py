@@ -23,8 +23,7 @@ Usage: klovis-agent [OPTIONS] [GOAL...]
 
 Options:
   -v, --verbose         Verbose output (show structlog + raw JSON)
-  --daemon              Run in daemon mode (continuous OODA loop)
-  --interval MINUTES    Daemon check interval (default: 30)
+  --daemon              Run in reactive daemon mode (event-driven)
   --cycles N            Max daemon cycles, 0 = infinite (default: 0)
   --data-dir PATH       Persistent data directory (default: ~/.local/share/klovis)
   --soul PATH           Path to a SOUL.md file defining the agent's personality
@@ -37,7 +36,6 @@ def _parse_args(argv: list[str]) -> dict:
     opts: dict = {
         "verbose": False,
         "daemon": False,
-        "interval": 30.0,
         "cycles": 0,
         "data_dir": "",
         "soul": "",
@@ -51,9 +49,6 @@ def _parse_args(argv: list[str]) -> dict:
             opts["verbose"] = True
         elif arg == "--daemon":
             opts["daemon"] = True
-        elif arg == "--interval" and i + 1 < len(argv):
-            i += 1
-            opts["interval"] = float(argv[i])
         elif arg == "--cycles" and i + 1 < len(argv):
             i += 1
             opts["cycles"] = int(argv[i])
@@ -177,7 +172,6 @@ def _load_optional_github_auth() -> object | None:
 
 async def _run_daemon(
     config: AgentConfig,
-    interval: float,
     max_cycles: int,
     verbose: bool,
     data_dir: str = "",
@@ -206,10 +200,7 @@ async def _run_daemon(
         config.sandbox.backend,
     )
 
-    daemon = agent.as_daemon(
-        interval_minutes=interval,
-        max_cycles=max_cycles,
-    )
+    daemon = agent.as_daemon(max_cycles=max_cycles)
     await daemon.run()
 
 
@@ -227,7 +218,7 @@ async def async_main() -> None:
 
     if opts["daemon"]:
         await _run_daemon(
-            config, opts["interval"], opts["cycles"], verbose,
+            config, opts["cycles"], verbose,
             data_dir=opts["data_dir"],
             soul=opts["soul"],
         )

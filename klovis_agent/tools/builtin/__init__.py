@@ -1,4 +1,9 @@
 from klovis_agent.tools.builtin.code_execution import CodeExecutionTool, TextAnalysisTool
+
+try:
+    from klovis_agent.tools.builtin.browser import BrowserTool
+except ImportError:  # playwright not installed
+    pass
 from klovis_agent.tools.builtin.file_tools import FileEditTool, FileReadTool, FileWriteTool
 from klovis_agent.tools.builtin.filesystem import (
     FsCopyTool,
@@ -39,6 +44,7 @@ from klovis_agent.tools.builtin.skills import (
 from klovis_agent.tools.builtin.web import HttpRequestTool, WebSearchTool
 
 __all__ = [
+    "BrowserTool",
     "CodeExecutionTool",
     "DiscordPerceptionSource",
     "FileEditTool",

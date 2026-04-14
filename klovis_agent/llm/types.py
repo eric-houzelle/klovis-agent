@@ -40,21 +40,25 @@ class ModelRoutingPolicy(BaseModel):
     execution_model: str | None = None
     check_model: str | None = None
     finish_model: str | None = None
+    narration_model: str | None = None
 
     planning_base_url: str | None = None
     execution_base_url: str | None = None
     check_base_url: str | None = None
     finish_base_url: str | None = None
+    narration_base_url: str | None = None
 
     planning_max_tokens: int | None = None
     execution_max_tokens: int | None = None
     check_max_tokens: int | None = None
     finish_max_tokens: int | None = None
+    narration_max_tokens: int | None = None
 
     planning_reasoning_effort: ReasoningEffort | None = None
     execution_reasoning_effort: ReasoningEffort | None = None
     check_reasoning_effort: ReasoningEffort | None = None
     finish_reasoning_effort: ReasoningEffort | None = None
+    narration_reasoning_effort: ReasoningEffort | None = None
 
     def _phase_lookup(self, purpose: str, suffix: str) -> object | None:
         return getattr(self, f"{purpose}_{suffix}", None)

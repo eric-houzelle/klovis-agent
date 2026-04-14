@@ -82,7 +82,18 @@ class PerceptionResult:
 
 
 class PerceptionSource(ABC):
-    """Interface for anything that can produce events for the agent."""
+    """Interface for anything that can produce events for the agent.
+
+    Subclasses must implement ``name`` and ``poll()``.  The reactive daemon
+    runs each source in its own async task, calling ``poll()`` in a loop
+    with ``poll_interval`` seconds between iterations.
+
+    Override ``poll_interval`` to control how often a source is checked
+    (default 30 s).  Sources that are push-based (e.g. Discord websocket)
+    can set a very long interval and push events from their own callbacks.
+    """
+
+    poll_interval: float = 30.0
 
     @property
     @abstractmethod

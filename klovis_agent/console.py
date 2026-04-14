@@ -41,6 +41,12 @@ def _truncate(text: str, max_len: int = 200) -> str:
     return text[:max_len] + "..."
 
 
+def _human_tokens(n: int) -> str:
+    if n >= 1000:
+        return f"{n / 1000:.1f}k tok"
+    return f"{n} tok"
+
+
 class Console:
     """Handles all user-facing output for the agent."""
 
@@ -76,7 +82,7 @@ class Console:
 
     def banner(self, model: str, base_url: str) -> None:
         self._print(f"\n{BOLD}{CYAN}Klovis Agent{RESET}")
-        self._print(f"{DIM}LLM: {model} @ {base_url}{RESET}")
+        self._print(f"{DIM}LLM: {model}{RESET}")
         self._print(f"{DIM}{'─' * 50}{RESET}")
 
     def banner_detail(self, max_tokens: int, temperature: float,
@@ -91,11 +97,10 @@ class Console:
     # Daemon cycle
     # ------------------------------------------------------------------
 
-    def daemon_start(self, interval_min: float, sources: list[str],
+    def daemon_start(self, sources: list[str],
                      max_cycles: int = 0) -> None:
-        self._print(f"\n{BOLD}{CYAN}Daemon started{RESET}")
-        self._print(f"{DIM}  Checking every {interval_min:.0f} min "
-                     f"| Sources: {', '.join(sources) or '(none)'}")
+        self._print(f"\n{BOLD}{CYAN}Daemon started (reactive){RESET}")
+        self._print(f"{DIM}  Sources: {', '.join(sources) or '(none)'}")
         if max_cycles:
             self._print(f"  Max cycles: {max_cycles}")
         self._print(f"{RESET}")
@@ -110,25 +115,69 @@ class Console:
     def perceive_result(self, summary: str, event_count: int) -> None:
         if event_count == 0:
             self._ts_print(f"{DIM}Nothing new.{RESET}")
-        else:
+        elif self.verbose:
             self._ts_print(f"Detected {event_count} event(s): {summary}")
+
+    def perceive_narration_start(self) -> None:
+        if not self.quiet:
+            print(f"   {CYAN}▸ ", end="", flush=True)
 
     def perceive_errors(self, errors: list[str]) -> None:
         for err in errors:
             self._ts_print(f"{RED}Perception error: {err}{RESET}")
 
+    def decision_context(
+        self,
+        events_text: str,
+        recalled_memories: str,
+        persistent_directives: str,
+    ) -> None:
+        """Show the full decision prompt context in verbose mode."""
+        if not self.verbose:
+            return
+        sep = "─" * 40
+        self._print(f"\n{DIM}{sep} DECISION CONTEXT {sep}{RESET}")
+        self._print(f"{DIM}{BOLD}## Events sent to LLM:{RESET}")
+        for line in events_text.splitlines():
+            self._print(f"  {DIM}{line}{RESET}")
+        self._print(f"\n{DIM}{BOLD}## Recalled Memories:{RESET}")
+        if recalled_memories:
+            for line in recalled_memories.splitlines():
+                self._print(f"  {DIM}{line}{RESET}")
+        else:
+            self._print(f"  {DIM}(none){RESET}")
+        self._print(f"\n{DIM}{BOLD}## Persistent Directives:{RESET}")
+        if persistent_directives:
+            for line in persistent_directives.splitlines():
+                self._print(f"  {DIM}{line}{RESET}")
+        else:
+            self._print(f"  {DIM}(none){RESET}")
+        self._print(f"{DIM}{sep}{'─' * 18}{sep}{RESET}\n")
+
     def deciding(self) -> None:
-        self._ts_print(f"Thinking about what to do...")
+        if self.verbose:
+            self._ts_print(f"Thinking about what to do...")
+
+    def reasoning_narration_start(self) -> None:
+        if not self.quiet:
+            print(f"   {DIM}▸ ", end="", flush=True)
 
     def decision(self, should_act: bool, goal: str, reasoning: str,
                  priority: str = "") -> None:
         if not should_act:
-            self._ts_print(f"{DIM}Nothing to do right now. ({_truncate(reasoning, 80)}){RESET}")
-        else:
-            prio = f" [{priority}]" if priority else ""
-            self._ts_print(f"{YELLOW}{BOLD}Decision{prio}:{RESET} {goal}")
+            self._ts_print(f"{DIM}Idle{RESET}")
             if self.verbose:
                 self._print(f"   {DIM}Reasoning: {reasoning}{RESET}")
+        else:
+            prio = f" [{priority}]" if priority else ""
+            self._ts_print(f"{YELLOW}{BOLD}Decision{prio}{RESET}")
+            if self.verbose:
+                self._print(f"   {DIM}Goal: {goal}{RESET}")
+                self._print(f"   {DIM}Reasoning: {reasoning}{RESET}")
+
+    def decision_narration_start(self) -> None:
+        if not self.quiet:
+            print(f"   {YELLOW}▸ ", end="", flush=True)
 
     def llm_usage(
         self,
@@ -137,6 +186,8 @@ class Console:
         completion_tokens: int,
         total_tokens: int,
     ) -> None:
+        if not self.verbose:
+            return
         self._print(
             f"   {DIM}Tokens [{phase}] in={prompt_tokens} out={completion_tokens} total={total_tokens}{RESET}"
         )
@@ -165,16 +216,17 @@ class Console:
     # Agent run
     # ------------------------------------------------------------------
 
-    def run_start(self, goal: str, run_id: str) -> None:
-        self._print(f"\n{CYAN}{BOLD}Goal:{RESET} {goal}")
+    def run_start(self, goal: str, run_id: str, show_goal: bool = True) -> None:
+        if show_goal:
+            self._print(f"\n{CYAN}{BOLD}Goal:{RESET} {goal}")
         if self.verbose:
             self._print(f"{DIM}  run_id={run_id}{RESET}")
 
     def recall(self, memories: str) -> None:
         if not memories:
             return
-        self._ts_print(f"Recalling relevant memories...")
         if self.verbose:
+            self._ts_print(f"Recalling relevant memories...")
             self._print(_indent(memories))
 
     # ------------------------------------------------------------------
@@ -207,18 +259,48 @@ class Console:
     def step_tool_call(self, tool_name: str, input_keys: list[str]) -> None:
         if self.verbose:
             self._print(f"   {DIM}Tool: {tool_name}({', '.join(input_keys)}){RESET}")
-        else:
-            self._print(f"   {DIM}Using {tool_name}...{RESET}")
 
     def step_success(self, tool_name: str | None, preview: str) -> None:
-        tool_info = f" ({tool_name})" if tool_name else ""
-        self._print(f"   {GREEN}OK{tool_info}{RESET} {_truncate(preview, 120)}")
+        if self.verbose:
+            tool_info = f" ({tool_name})" if tool_name else ""
+            self._print(f"   {GREEN}OK{tool_info}{RESET} {_truncate(preview, 120)}")
 
     def step_failed(self, error: str) -> None:
         self._print(f"   {RED}Failed:{RESET} {_truncate(error, 150)}")
 
     def step_direct_response(self, preview: str) -> None:
-        self._print(f"   {DIM}{_truncate(preview, 150)}{RESET}")
+        if self.verbose:
+            self._print(f"   {DIM}{_truncate(preview, 150)}{RESET}")
+
+    # ------------------------------------------------------------------
+    # Streaming narration
+    # ------------------------------------------------------------------
+
+    def step_intent_start(self) -> None:
+        """Print the prefix before streaming the intent summary."""
+        if not self.quiet:
+            print(f"   {CYAN}▸ ", end="", flush=True)
+
+    def stream_token(self, token: str) -> None:
+        """Print a single streamed token inline."""
+        if not self.quiet:
+            print(token, end="", flush=True)
+
+    def stream_end(self) -> None:
+        """Close a streamed line (reset color, newline)."""
+        if not self.quiet:
+            print(RESET, flush=True)
+
+    def step_outcome_start(self, success: bool) -> None:
+        color = GREEN if success else RED
+        icon = "✓" if success else "✗"
+        if not self.quiet:
+            print(f"   {color}{icon} ", end="", flush=True)
+
+    def step_outcome_end(self, total_tokens: int) -> None:
+        """Close the outcome line with a dim token count."""
+        if not self.quiet:
+            print(f"  {DIM}⟨{_human_tokens(total_tokens)}⟩{RESET}", flush=True)
 
     # ------------------------------------------------------------------
     # Check
@@ -260,10 +342,14 @@ class Console:
         label = {"success": "Done", "partial_success": "Partially done",
                  "failure": "Failed"}.get(status, status)
         self._ts_print(f"{color}{BOLD}{label}{RESET} ({iterations} iterations)")
-        if summary:
+        if summary and self.verbose:
             self._print(f"\n   {summary}")
         if limitations and self.verbose:
             self._print(f"\n   {DIM}Limitations: {'; '.join(limitations)}{RESET}")
+
+    def finish_narration_start(self) -> None:
+        if not self.quiet:
+            print(f"   {GREEN}▸ ", end="", flush=True)
 
     # ------------------------------------------------------------------
     # Consolidation
@@ -281,13 +367,14 @@ class Console:
 
     def run_result(self, status: str, iterations: int, step_count: int,
                    summary: str) -> None:
-        self._print(f"\n{'═' * 50}")
-        color = GREEN if status == "completed" else RED
-        self._print(f"{color}{BOLD}Status: {status}{RESET}  "
-                     f"({iterations} iterations, {step_count} steps)")
-        if summary:
-            self._print(f"\n{summary}")
-        self._print(f"{'═' * 50}")
+        if self.verbose:
+            self._print(f"\n{'═' * 50}")
+            color = GREEN if status == "completed" else RED
+            self._print(f"{color}{BOLD}Status: {status}{RESET}  "
+                         f"({iterations} iterations, {step_count} steps)")
+            if summary:
+                self._print(f"\n{summary}")
+            self._print(f"{'═' * 50}")
 
 
 def get_console(state: dict[str, Any]) -> Console:

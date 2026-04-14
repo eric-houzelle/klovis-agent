@@ -12,7 +12,7 @@
 <p align="center">
 Composable Python library for building <b>goal-oriented autonomous agents</b>.<br>
 Agents plan, execute, verify, and dynamically adapt their strategy through a LangGraph loop.<br>
-In daemon mode, they observe their environment, decide whether to act, and consolidate their memory — all continuously.
+In daemon mode, they react to their environment in real time through an event-driven architecture — always listening, deciding, and acting when it matters.
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@ In daemon mode, they observe their environment, decide whether to act, and conso
 
 🧠 **Goal-oriented execution** — the agent plans multi-step strategies, executes them, and replans on failure. Not a chatbot — a reasoning loop.
 
-🔄 **Daemon mode (OODA)** — continuous perception-decision-action loop. The agent observes its environment, recalls relevant memories, and decides autonomously whether to act.
+🔄 **Reactive daemon mode** — event-driven architecture with permanent listeners. Each perception source runs independently and pushes events into a shared bus. The agent reacts in real time and keeps listening while it acts.
 
 🧩 **Fully composable** — tools, perception sources, memory backends, and sandbox are all injectable. Nothing is hardcoded.
 
@@ -72,7 +72,7 @@ print(result.summary)
 That's it. The agent plans, executes, verifies, and returns a structured result.
 
 <details>
-<summary><b>Daemon mode (continuous OODA loop)</b></summary>
+<summary><b>Reactive daemon mode (event-driven)</b></summary>
 
 ```python
 from klovis_agent import Agent, LLMConfig, InboxPerceptionSource
@@ -81,9 +81,11 @@ agent = Agent(
     llm=LLMConfig(api_key="sk-..."),
     perceptions=[InboxPerceptionSource()],
 )
-daemon = agent.as_daemon(interval_minutes=5, max_cycles=100)
+daemon = agent.as_daemon(max_cycles=100)
 await daemon.run()
 ```
+
+Each perception source runs as an independent async listener, pushing events into a shared bus. The daemon reacts as soon as events arrive — no fixed polling interval.
 </details>
 
 <details>
@@ -91,7 +93,7 @@ await daemon.run()
 
 ```bash
 python run.py "Write a blog post about AI agents"
-python run.py --daemon --interval 5 --cycles 100
+python run.py --daemon --cycles 100
 python run.py --soul ./my-soul.md "Do something creative"
 python run.py --ephemeral "Quick test"
 ```
@@ -99,8 +101,7 @@ python run.py --ephemeral "Quick test"
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-v`, `--verbose` | Structlog + raw JSON logs | off |
-| `--daemon` | Daemon mode (OODA loop) | off |
-| `--interval MIN` | Interval between daemon cycles | 30 |
+| `--daemon` | Reactive daemon mode (event-driven) | off |
 | `--cycles N` | Max daemon cycles (0 = infinite) | 0 |
 | `--data-dir PATH` | Persistent data directory | `~/.local/share/klovis` |
 | `--soul PATH` | Personality file (SOUL.md) | none |
@@ -184,40 +185,65 @@ Each run follows a 5-node graph:
 - **Replan** — on failure, the LLM generates a new plan with error context
 - **Finish** — final summary + memory consolidation
 
-### OODA loop (daemon mode)
+### Reactive daemon (event-driven)
+
+The daemon follows a **reactive, event-driven** architecture. Each perception source runs as an independent async listener, pushing events into a shared `EventBus`. A single reactive loop drains the bus and decides what to do. While the agent executes a goal, listeners keep running — nothing is lost.
 
 ```
-    ┌─────────────────────────────────────────────────┐
-    │                                                 │
-    │  ┌──────────┐    ┌──────────┐    ┌──────────┐  │
-    │  │ OBSERVE  │───▶│  ORIENT  │───▶│  DECIDE  │  │
-    │  │ perceive │    │  recall  │    │  (LLM)   │  │
-    │  └──────────┘    └──────────┘    └────┬─────┘  │
-    │                                       │        │
-    │                    should_act?         │        │
-    │                  ┌────────┬────────────┘        │
-    │                  │        │                     │
-    │                  No      Yes                    │
-    │                  │        │                     │
-    │                  │   ┌────▼─────┐               │
-    │                  │   │   ACT    │               │
-    │                  │   │ agent.run│               │
-    │                  │   └────┬─────┘               │
-    │                  │        │                     │
-    │                  │   ┌────▼──────────┐          │
-    │                  │   │  CONSOLIDATE  │          │
-    │                  │   │ extract memory│          │
-    │                  │   └────┬──────────┘          │
-    │                  │        │                     │
-    │                  └────────┴─── sleep ───────────┘
-    │                                                 │
-    └─────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │                   PERCEPTION LAYER                        │
+    │                                                          │
+    │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
+    │  │ Moltbook │  │ Discord  │  │  GitHub  │  │  Inbox  │ │
+    │  │ Listener │  │ Listener │  │ Listener │  │ Watcher │ │
+    │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
+    │       │              │              │              │      │
+    │       │    Each source polls/listens at its own    │      │
+    │       │    pace and pushes Event into the bus      │      │
+    │       ▼              ▼              ▼              ▼      │
+    │  ┌──────────────────────────────────────────────────┐    │
+    │  │              EVENT BUS (async queue)              │    │
+    │  └──────────────────────┬───────────────────────────┘    │
+    └─────────────────────────┼────────────────────────────────┘
+                              │
+                              ▼
+                    ┌──────────────────┐
+                    │  REACTIVE LOOP   │
+                    │                  │
+                    │  drain bus       │◀──── blocks until events arrive
+                    │  recall memories │      (no fixed sleep interval)
+                    │  decide (LLM)   │
+                    └────────┬─────────┘
+                             │
+                  ┌──────────┴──────────┐
+                  │                     │
+             should_act?           should_act?
+               = No                   = Yes
+                  │                     │
+                  ▼                     ▼
+            back to drain      ┌─────────────────┐
+                               │  agent.run(goal) │
+                               │  (LangGraph)     │
+                               └────────┬─────────┘
+                                        │
+                                        ▼
+                               ┌─────────────────┐
+                               │  CONSOLIDATE     │
+                               │  extract memory  │
+                               └────────┬─────────┘
+                                        │
+                                        ▼
+                               drain bus again
+                               (process events that
+                                arrived during action)
 ```
 
-| Phase | Module | Role |
-|-------|--------|------|
-| **Observe** | `perception.base.perceive()` | Polls all `PerceptionSource`s, aggregates `Event`s |
-| **Orient** | `recall.recall_for_task()` | Searches episodic + semantic memory and relevant skills |
+| Component | Module | Role |
+|-----------|--------|------|
+| **Listeners** | `perception.base.PerceptionSource` | Each source runs in its own async task, pushing `Event`s into the bus at its own `poll_interval` |
+| **Event Bus** | `perception.bus.EventBus` | Async queue connecting listeners to the decision loop |
+| **Reactive Loop** | `daemon.AgentDaemon` | Drains the bus, batches events, handles requests, runs the LLM decision |
+| **Recall** | `recall.recall_for_task()` | Searches episodic + semantic memory and relevant skills |
 | **Decide** | `decision.decide()` | The LLM analyzes events + memories and decides whether to act |
 | **Act** | `agent.run(goal)` | Runs the full LangGraph execution graph |
 | **Consolidate** | `consolidation.consolidate_run()` | Extracts 2-6 memories from the run and stores them by zone |
@@ -391,40 +417,47 @@ agent = Agent(
 
 ## Perception
 
-The perception system is the agent's sensory interface. Any external source can feed events to the daemon.
+The perception system is the agent's sensory interface. Any external source can feed events into the shared `EventBus`. Each source runs as an independent async listener at its own pace (`poll_interval`).
 
-| Source | Module | Events |
-|--------|--------|--------|
-| **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` |
-| **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) |
-| **GitHub** | `tools.builtin.github` | Repo notifications, issues, PRs, pushes (optional — requires credentials) |
-| **Discord** | `tools.builtin.discord_bot` | DMs and @mentions via Discord bot (optional — requires bot token) |
+| Source | Module | Events | Default interval |
+|--------|--------|--------|:----------------:|
+| **Inbox** | `perception.inbox` | `.txt` files dropped in `~/.local/share/klovis/inbox/` | 30s |
+| **Moltbook** | `tools.builtin.moltbook` | API notifications (mentions, replies, DMs) | 30s |
+| **GitHub** | `tools.builtin.github` | Repo notifications, issues, PRs, pushes | 30s |
+| **Discord** | `tools.builtin.discord_bot` | DMs and @mentions via Discord bot (push-based) | 30s |
 
 Available event types: `NOTIFICATION`, `MESSAGE`, `MENTION`, `REACTION`, `NEW_CONTENT`, `REQUEST`, `SCHEDULE`, `SYSTEM`, `OTHER`.
 
 <details>
 <summary><b>Creating a custom perception source</b></summary>
 
+Implement `PerceptionSource` with a `name`, a `poll()` method, and an optional `poll_interval`. The daemon handles the rest — your source runs in its own async task and pushes events into the bus automatically.
+
 ```python
-from klovis_agent import PerceptionSource
-from klovis_agent.perception.base import Event, EventKind
+from klovis_agent.perception.base import Event, EventKind, PerceptionSource
 
 class RSSPerceptionSource(PerceptionSource):
+    poll_interval = 120.0  # check every 2 minutes
+
     @property
     def name(self) -> str:
         return "rss"
 
     async def poll(self) -> list[Event]:
+        new_articles = await self._fetch_new_articles()
         return [
             Event(
                 source="rss",
                 kind=EventKind.NEW_CONTENT,
-                title="New article: ...",
-                detail="...",
-                metadata={"url": "https://..."},
+                title=f"New article: {a.title}",
+                detail=a.summary,
+                metadata={"url": a.url, "author": a.author},
             )
+            for a in new_articles
         ]
 ```
+
+The `poll_interval` controls how often the listener calls `poll()`. Sources that are push-based (e.g. websockets) can set a long interval and push events from their own callbacks.
 </details>
 
 ---
@@ -524,7 +557,7 @@ _GITHUB_REPOS = [
 ]
 ```
 
-Each entry creates a `GitHubPerceptionSource` instance. The agent observes all of them during its OODA loop. If no GitHub credentials are set, the tools are simply not registered — no error, no dependency.
+Each entry creates a `GitHubPerceptionSource` instance that runs as an independent listener in the reactive daemon. If no GitHub credentials are set, the tools are simply not registered — no error, no dependency.
 
 Install the optional crypto dependency for GitHub App auth:
 
@@ -570,7 +603,7 @@ Leave `DISCORD_ALLOWED_USERS` empty to allow anyone to interact with the bot (no
 **3. Run in daemon mode:**
 
 ```bash
-python run.py --daemon --interval 0.5
+python run.py --daemon
 ```
 
 The bot connects automatically when a `DISCORD_BOT_TOKEN` is detected. You can DM the bot directly or @mention it in any channel it has access to. The agent processes each message as a goal, executes it, and replies with the result.
@@ -614,7 +647,7 @@ docker compose up -d --build
 The container runs:
 
 ```bash
-uv run python run.py --daemon --interval 0.5
+uv run python run.py --daemon
 ```
 
 3. Follow logs:
@@ -646,7 +679,7 @@ klovis_agent/
 ├── agent.py                 # Agent class (main facade)
 ├── config.py                # LLMConfig, SandboxConfig, AgentConfig
 ├── result.py                # AgentResult (user-friendly wrapper)
-├── daemon.py                # AgentDaemon (OODA loop)
+├── daemon.py                # AgentDaemon (reactive, event-driven)
 ├── decision.py              # LLM decision module
 ├── recall.py                # Pre-run memory recall (two zones + skill index)
 ├── consolidation.py         # Post-run memory consolidation (zone tagging)
@@ -684,6 +717,7 @@ klovis_agent/
 │
 ├── perception/              # Perception sources
 │   ├── base.py              # PerceptionSource ABC, Event, EventKind, perceive()
+│   ├── bus.py               # EventBus (async queue connecting listeners to decision loop)
 │   └── inbox.py             # InboxPerceptionSource (.txt files)
 │
 ├── memory/                  # Memory backends (re-exports)
@@ -707,5 +741,5 @@ klovis_agent/
 - **Explicit confirmation** — destructive operations require human validation. Configurable per tool.
 - **Dynamic planning** — automatic replanning on failure, with error context injection.
 - **Sandbox** — generated code runs in isolation (local or OpenSandbox).
-- **Source-agnostic perception** — the daemon doesn't know where events come from. Any source implementing `PerceptionSource` can feed the loop.
+- **Source-agnostic perception** — the daemon doesn't know where events come from. Any source implementing `PerceptionSource` can push events into the bus. Poll-based, push-based, stream-based — the architecture handles all modes transparently.
 - **Self-extending** — the agent discovers and installs skills autonomously from online registries. Acquired capabilities are vectorised and recalled semantically in future runs.
