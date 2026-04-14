@@ -142,6 +142,8 @@ tools = minimal_tools()
 
 ## How does it work?
 
+Hand-drawn **PNG diagrams** live in [`assets/`](./assets/) (`schema1.png` … `schema4.png`). Editable **Mermaid** versions of the same flows are in [`assets/diagrams.md`](./assets/diagrams.md).
+
 ### Execution loop (LangGraph)
 
 Each run follows a 5-node graph:
@@ -178,6 +180,10 @@ Each run follows a 5-node graph:
                                     │(summary) │
                                     └──────────┘
 ```
+
+<p align="center">
+  <img src="./assets/schema1.png" alt="LangGraph loop: PLAN, EXECUTE, CHECK, REPLAN, FINISH" width="720">
+</p>
 
 - **Plan** — the LLM breaks down the goal into steps and selects tools
 - **Execute** — each step runs via the `ToolRegistry`
@@ -238,6 +244,10 @@ The daemon follows a **reactive, event-driven** architecture. Each perception so
                                 arrived during action)
 ```
 
+<p align="center">
+  <img src="./assets/schema2.png" alt="Reactive daemon: perception sources, EventBus, recall, decide, LangGraph run, consolidate" width="720">
+</p>
+
 | Component | Module | Role |
 |-----------|--------|------|
 | **Listeners** | `perception.base.PerceptionSource` | Each source runs in its own async task, pushing `Event`s into the bus at its own `poll_interval` |
@@ -262,6 +272,10 @@ The agent has a persistent two-zone memory, stored in SQLite with vector embeddi
 |------|---------|:---:|---------|:---:|
 | **episodic** | Actions taken, events, interactions | 14 days (auto-prune) | `similarity × 0.6 + recency × 0.4` | No (each action is unique) |
 | **semantic** | Facts, lessons, preferences, identity | Permanent | Pure cosine similarity | Yes (similarity > 0.9 → update in-place) |
+
+<p align="center">
+  <img src="./assets/schema3.png" alt="Memory lifecycle: consolidate_run, episodic vs semantic zones, recall_for_task" width="720">
+</p>
 
 <details>
 <summary><b>Memory lifecycle</b></summary>
@@ -327,6 +341,10 @@ recall_for_task()         Semantic search over indexed skills
         ▼
   Next run                Skill is found by recall automatically
 ```
+
+<p align="center">
+  <img src="./assets/schema4.png" alt="Skill lifecycle: recall, remote search, install, index, read_skill, consolidate" width="720">
+</p>
 
 ### How it works
 
@@ -729,6 +747,17 @@ klovis_agent/
 └── infra/                   # SQLite persistence
 ```
 </details>
+
+**Diagram assets** (also embedded under [How does it work?](#how-does-it-work)):
+
+| File | Topic |
+|------|--------|
+| [`assets/schema1.png`](./assets/schema1.png) | LangGraph execution loop (PLAN → … → FINISH) |
+| [`assets/schema2.png`](./assets/schema2.png) | Reactive daemon (perceptions, `EventBus`, decide, consolidate) |
+| [`assets/schema3.png`](./assets/schema3.png) | Two-zone memory (consolidate → recall) |
+| [`assets/schema4.png`](./assets/schema4.png) | Skill lifecycle (recall → install → index → next run) |
+
+Editable Mermaid for the same flows: [`assets/diagrams.md`](./assets/diagrams.md).
 
 ---
 

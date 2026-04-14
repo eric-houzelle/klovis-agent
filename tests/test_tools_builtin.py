@@ -283,3 +283,17 @@ class TestSkillSourceParsing:
         url = "https://raw.githubusercontent.com/a/b/main/skills/x/SKILL.md"
         c = _source_to_candidates(url)
         assert c == [url]
+
+    def test_skills_sh_single_segment_invalid(self):
+        assert _source_to_candidates("https://skills.sh/agentmail") == []
+
+    def test_skills_sh_search_query_invalid(self):
+        assert _source_to_candidates("https://skills.sh/?q=agentmail") == []
+
+    def test_skills_sh_valid_owner_repo_skills_path(self):
+        """Full owner/repo/skills/slug path (four segments after host)."""
+        c = _source_to_candidates(
+            "https://skills.sh/vercel-labs/agent-skills/skills/my-skill",
+        )
+        assert c
+        assert "vercel-labs" in c[0] and "my-skill" in c[0]

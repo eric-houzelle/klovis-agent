@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import structlog
 
@@ -299,9 +300,11 @@ class InstallSkillTool(BaseTool):
         return ToolSpec(
             name="install_skill",
             description=(
-                "Install a new skill from skills.sh, GitHub, or a direct SKILL.md URL. "
-                "After installation, skills are reloaded so list_skills/read_skill can "
-                "use it immediately in the same run."
+                "Install a new skill from skills.sh (full registry path), GitHub, or a "
+                "direct raw SKILL.md URL. skills.sh search (https://skills.sh/?q=...) is "
+                "only for discovery in a browser or via web_search — it is NOT a valid "
+                "install source. After installation, skills are reloaded so list_skills/"
+                "read_skill can use it immediately in the same run."
             ),
             input_schema={
                 "type": "object",
@@ -309,10 +312,15 @@ class InstallSkillTool(BaseTool):
                     "source": {
                         "type": "string",
                         "description": (
-                            "Source pointer. Examples: "
-                            "https://skills.sh/vercel-labs/skills/find-skills, "
-                            "owner/repo/skills/skill-name, "
-                            "https://raw.githubusercontent.com/.../SKILL.md"
+                            "Install pointer only. Valid forms: (1) skills.sh registry path "
+                            "https://skills.sh/<owner>/<repo>/skills/<skill-slug> or the short "
+                            "form https://skills.sh/<owner>/skills/<skill-slug> (repo name "
+                            "defaults to 'skills'); (2) owner/repo/skills/<skill-slug>; "
+                            "(3) raw GitHub URL to SKILL.md. INVALID: https://skills.sh/<name> "
+                            "with a single path segment (not a repo path); "
+                            "https://skills.sh/?q=... (search page, use it to find the real "
+                            "path then pass that path here). Example: "
+                            "https://skills.sh/vercel-labs/skills/find-skills"
                         ),
                     },
                     "destination": {
@@ -354,11 +362,18 @@ class InstallSkillTool(BaseTool):
 
         candidates = _source_to_candidates(source)
         if not candidates:
+            extra = ""
+            if "skills.sh" in source.lower():
+                extra = (
+                    " For skills.sh: discover with https://skills.sh/?q=<terms>, then install "
+                    "using the full path https://skills.sh/<owner>/<repo>/skills/<slug> or "
+                    "owner/repo/skills/<slug>. Do not use https://skills.sh/<single-name>."
+                )
             return ToolResult(
                 success=False,
                 error=(
-                    "Unsupported source format. Use skills.sh URL, "
-                    "owner/repo/skills/name, or direct SKILL.md URL."
+                    "Unsupported source format. Use a full skills.sh registry path, "
+                    "owner/repo/skills/name, or a direct raw SKILL.md URL." + extra
                 ),
             )
 
@@ -661,12 +676,35 @@ def _guess_skill_slug(source: str) -> str:
     return source.split("/")[-1]
 
 
+def _skills_sh_unsupported_install_url(url: str) -> bool:
+    """True if URL is skills.sh but not a valid install pattern (search or /slug typo)."""
+    try:
+        parsed = urlparse(url.strip())
+    except ValueError:
+        return False
+    host = (parsed.netloc or "").lower().split(":")[0]
+    if host not in ("skills.sh", "www.skills.sh"):
+        return False
+    # Search UI: ?q= — not a raw SKILL.md source
+    if parsed.query and re.search(r"(^|&)q=", parsed.query):
+        return True
+    path = (parsed.path or "").strip("/")
+    segments = [s for s in path.split("/") if s]
+    # https://skills.sh/agentmail — one segment is never owner/repo/skills/slug
+    if len(segments) == 1 and not segments[0].lower().endswith("skill.md"):
+        return True
+    return False
+
+
 def _source_to_candidates(source: str) -> list[str]:
     src = source.strip()
     if not src:
         return []
 
     if src.startswith("http://") or src.startswith("https://"):
+        if _skills_sh_unsupported_install_url(src):
+            return []
+
         if src.endswith("/SKILL.md"):
             return [src]
 
