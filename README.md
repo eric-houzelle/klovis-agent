@@ -146,40 +146,7 @@ Hand-drawn **PNG diagrams** live in [`assets/`](./assets/) (`schema1.png` … `s
 
 ### Execution loop (LangGraph)
 
-Each run follows a 5-node graph:
-
-```
-                    ┌──────────┐
-                    │   PLAN   │
-                    │  (LLM)   │
-                    └────┬─────┘
-                         │
-                         ▼
-                    ┌──────────┐
-              ┌────▶│ EXECUTE  │
-              │     │  (tool)  │
-              │     └────┬─────┘
-              │          │
-              │          ▼
-              │     ┌──────────┐
-              │     │  CHECK   │──────────┐
-              │     │ (router) │          │
-              │     └────┬─────┘          │
-              │          │                │
-              │     next step?       failed / replan?
-              │          │                │
-              │          ▼                ▼
-              │          │          ┌──────────┐
-              └──────────┘          │ REPLAN   │
-                                    │  (LLM)   │
-                                    └────┬─────┘
-                                         │
-                                         ▼
-                                    ┌──────────┐
-                                    │  FINISH  │
-                                    │(summary) │
-                                    └──────────┘
-```
+Flow: **Plan** → **Execute** → **Check** → **Replan** (on failure) → **Finish**.
 
 <p align="center">
   <img src="./assets/schema1.png" alt="LangGraph loop: PLAN, EXECUTE, CHECK, REPLAN, FINISH" width="720">
@@ -194,55 +161,6 @@ Each run follows a 5-node graph:
 ### Reactive daemon (event-driven)
 
 The daemon follows a **reactive, event-driven** architecture. Each perception source runs as an independent async listener, pushing events into a shared `EventBus`. A single reactive loop drains the bus and decides what to do. While the agent executes a goal, listeners keep running — nothing is lost.
-
-```
-    ┌──────────────────────────────────────────────────────────┐
-    │                   PERCEPTION LAYER                        │
-    │                                                          │
-    │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-    │  │ Moltbook │  │ Discord  │  │  GitHub  │  │  Inbox  │ │
-    │  │ Listener │  │ Listener │  │ Listener │  │ Watcher │ │
-    │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
-    │       │              │              │              │      │
-    │       │    Each source polls/listens at its own    │      │
-    │       │    pace and pushes Event into the bus      │      │
-    │       ▼              ▼              ▼              ▼      │
-    │  ┌──────────────────────────────────────────────────┐    │
-    │  │              EVENT BUS (async queue)              │    │
-    │  └──────────────────────┬───────────────────────────┘    │
-    └─────────────────────────┼────────────────────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │  REACTIVE LOOP   │
-                    │                  │
-                    │  drain bus       │◀──── blocks until events arrive
-                    │  recall memories │      (no fixed sleep interval)
-                    │  decide (LLM)   │
-                    └────────┬─────────┘
-                             │
-                  ┌──────────┴──────────┐
-                  │                     │
-             should_act?           should_act?
-               = No                   = Yes
-                  │                     │
-                  ▼                     ▼
-            back to drain      ┌─────────────────┐
-                               │  agent.run(goal) │
-                               │  (LangGraph)     │
-                               └────────┬─────────┘
-                                        │
-                                        ▼
-                               ┌─────────────────┐
-                               │  CONSOLIDATE     │
-                               │  extract memory  │
-                               └────────┬─────────┘
-                                        │
-                                        ▼
-                               drain bus again
-                               (process events that
-                                arrived during action)
-```
 
 <p align="center">
   <img src="./assets/schema2.png" alt="Reactive daemon: perception sources, EventBus, recall, decide, LangGraph run, consolidate" width="720">
@@ -280,32 +198,9 @@ The agent has a persistent two-zone memory, stored in SQLite with vector embeddi
 <details>
 <summary><b>Memory lifecycle</b></summary>
 
-```
-Run completed
-    │
-    ▼
-consolidate_run()          LLM extracts 2-6 memories with zone + tags
-    │
-    ├── zone: "episodic"   → INSERT (never deduplicated)
-    │   tag: action_taken     "Replied to nex_v4 on post ee22ee81"
-    │
-    └── zone: "semantic"   → UPSERT if similarity > 0.9
-        tag: lesson           "Moltbook API returns 500 sometimes, retry works"
-    │
-    ▼
-Next daemon cycle
-    │
-    ▼
-recall_for_task()          Prune episodic (TTL) then search both zones
-    │
-    ├── 4 episodic memories (sorted by score = sim + recency)
-    └── 4 semantic memories (sorted by similarity)
-    │
-    ▼
-Injected into decision and planning prompts
-```
+After a run, **`consolidate_run()`** asks the LLM for **2–6** structured memories (zone + tags + type). **Episodic** rows are **INSERT**-only (e.g. `action_taken`: “Replied to … on post …”). **Semantic** rows **UPSERT** when a new embedding is very similar to an existing one (cosine similarity above **0.9**). On the next cycle, **`recall_for_task()`** prunes expired episodic entries, then injects up to **4** episodic and **4** semantic hits (plus directives / skills when configured) into decision and planning prompts.
 
-The schema is backward-compatible. Older SQLite databases without a `zone` column are automatically migrated on first access.
+The SQLite schema is backward-compatible: databases without a `zone` column are migrated on first access.
 </details>
 
 ---
@@ -316,31 +211,7 @@ Skills are markdown documents (`SKILL.md`) that describe external APIs, workflow
 
 ### Skill lifecycle
 
-```
-Need identified
-  │
-  ▼
-recall_for_task()         Semantic search over indexed skills
-  │
-  ├── Found?  ──▶  read_skill → use it
-  │
-  └── Not found?
-        │
-        ▼
-  search_remote_skills()  Queries skillshub.wtf + skillsdirectory.com
-        │
-        ▼
-  install_skill()         Downloads SKILL.md from GitHub
-        │
-        ▼
-  SkillIndex              Vectorises and stores the summary
-        │
-        ▼
-  consolidate_run()       Memorises "I learned skill X for Y" (semantic zone)
-        │
-        ▼
-  Next run                Skill is found by recall automatically
-```
+If **`recall_for_task()`** already surfaces a matching skill → **`read_skill`** and use it. Otherwise **`search_remote_skills`** (registries) → **`install_skill`** (e.g. `SKILL.md` from GitHub) → **`SkillIndex`** vectorises the summary → after the run, **`consolidate_run()`** stores a lesson so the next run finds the skill via recall.
 
 <p align="center">
   <img src="./assets/schema4.png" alt="Skill lifecycle: recall, remote search, install, index, read_skill, consolidate" width="720">
