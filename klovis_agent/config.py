@@ -57,10 +57,7 @@ class AgentConfig(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     max_iterations: int = 25
     verbose: bool = False
-
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-
     data_dir: str = ""
     cache_dir: str = ""
-
     db_url: str = ""
